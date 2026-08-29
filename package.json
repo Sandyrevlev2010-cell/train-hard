@@ -1,0 +1,27 @@
+{
+  "name": "trainhard",
+  "version": "1.0.0",
+  "private": true,
+  "description": "Train Hard — Telegram Mini App для пауэрлифтинга (frontend + локальные тесты + backend API)",
+  "type": "commonjs",
+  "scripts": {
+    "build": "python3 build.py && python3 build_telegram.py",
+    "dev": "node tools/dev.js",
+    "test": "node tools/run-all-tests.js",
+    "test:frontend": "node tools/run-all-tests.js --frontend-only",
+    "test:backend": "node --test server/test/*.test.js",
+    "test:unit": "node --test server/test/auth.test.js server/test/workouts.test.js server/test/prs.test.js server/test/groups.test.js server/test/leaderboard.test.js server/test/competitions.test.js server/test/security.test.js server/test/payments.test.js server/test/programs.test.js server/test/sync.test.js",
+    "test:integration": "node --test server/test/e2e-two-users.test.js server/test/api-surface.test.js",
+    "test:security": "node --test server/test/security.test.js server/test/auth.test.js && node tools/audit-test.js"
+  },
+  "devDependencies": {
+    "jsdom": "^29.1.1",
+    "jsqr": "^1.4.0"
+  },
+  "optionalDependencies": {
+    "canvas": "^3.2.3"
+  },
+  "dependencies": {
+    "pg": "^8.11.5"
+  }
+}
