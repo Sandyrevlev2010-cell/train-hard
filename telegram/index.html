@@ -15711,5 +15711,115 @@ img{max-width:100%;-webkit-user-drag:none}
 })();
 
 </script>
+<style id="trainhard-onboarding-enhancements">
+@keyframes thOnboardingLogoFloat {
+  0%, 100% { transform: translate3d(0, 0, 0) scale(1); letter-spacing: .20em; }
+  50% { transform: translate3d(0, -3px, 0) scale(1.035); letter-spacing: .235em; }
+}
+.th-onboarding-logo-motion {
+  display: inline-block;
+  transform-origin: center;
+  animation: thOnboardingLogoFloat 2.35s cubic-bezier(.45,0,.55,1) infinite;
+  will-change: transform, letter-spacing;
+  text-shadow: 0 0 18px rgba(239,68,68,.16);
+}
+@media (prefers-reduced-motion: reduce) {
+  .th-onboarding-logo-motion { animation: none; }
+}</style>
+<script>
+(function () {
+  'use strict';
+
+  var NAME_DRAFT_KEY = 'trainhard_onboarding_name_draft';
+
+  function isOnboarding() {
+    var root = document.getElementById('root');
+    if (!root) return false;
+    var text = root.textContent || '';
+    return text.indexOf('Какой результат хочешь получить?') !== -1 ||
+           text.indexOf('Как тебя зовут?') !== -1 ||
+           text.indexOf('Выбери программу') !== -1;
+  }
+
+  function updateLogo() {
+    var logo = document.querySelector('#root h1.th-logo');
+    if (!logo) return;
+    logo.classList.toggle('th-onboarding-logo-motion', isOnboarding());
+  }
+
+  function nameInput(target) {
+    if (!target || target.tagName !== 'INPUT') return false;
+    return target.getAttribute('placeholder') === 'Имя';
+  }
+
+  function saveDraft(input) {
+    try {
+      var value = String(input && input.value || '').trim();
+      if (value) localStorage.setItem(NAME_DRAFT_KEY, value);
+      else localStorage.removeItem(NAME_DRAFT_KEY);
+    } catch (e) {}
+  }
+
+  function restoreDraft() {
+    if (!isOnboarding()) return;
+    var input = document.querySelector('#root input[placeholder="Имя"]');
+    if (!input || input.value) return;
+    var value = '';
+    try { value = localStorage.getItem(NAME_DRAFT_KEY) || ''; } catch (e) {}
+    if (!value) return;
+
+    try {
+      var setter = Object.getOwnPropertyDescriptor(HTMLInputElement.prototype, 'value').set;
+      setter.call(input, value);
+      input.dispatchEvent(new Event('input', { bubbles: true }));
+      input.dispatchEvent(new Event('change', { bubbles: true }));
+    } catch (e) {
+      input.value = value;
+    }
+  }
+
+  document.addEventListener('input', function (event) {
+    if (nameInput(event.target)) saveDraft(event.target);
+  }, true);
+
+  document.addEventListener('keydown', function (event) {
+    if (event.key !== 'Enter' || !nameInput(event.target)) return;
+
+    var input = event.target;
+    saveDraft(input);
+    event.preventDefault();
+    event.stopPropagation();
+
+    try { input.blur(); } catch (e) {}
+
+    // iOS/Telegram may keep the keyboard visible for one frame after blur.
+    setTimeout(function () {
+      try { input.blur(); } catch (e) {}
+    }, 0);
+  }, true);
+
+  document.addEventListener('click', function (event) {
+    var button = event.target && event.target.closest ? event.target.closest('button') : null;
+    if (!button) return;
+    if ((button.textContent || '').indexOf('Продолжить') !== -1) {
+      try { localStorage.removeItem(NAME_DRAFT_KEY); } catch (e) {}
+    }
+  }, true);
+
+  var observer = new MutationObserver(function () {
+    updateLogo();
+    restoreDraft();
+  });
+
+  function start() {
+    updateLogo();
+    restoreDraft();
+    var root = document.getElementById('root');
+    if (root) observer.observe(root, { childList: true, subtree: true, characterData: true });
+  }
+
+  if (document.readyState === 'loading') document.addEventListener('DOMContentLoaded', start);
+  else start();
+})();</script>
 </body>
 </html>
