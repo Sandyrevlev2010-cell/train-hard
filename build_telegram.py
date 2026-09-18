@@ -1,7 +1,7 @@
 #!/usr/bin/env python3
 import os,re,subprocess
 ROOT=os.path.dirname(os.path.abspath(__file__))
-SRC=os.path.join(ROOT,'index.html'); OUT_DIR=os.path.join(ROOT,'telegram'); OUT=os.path.join(OUT_DIR,'index.html')
+SRC=os.path.join(ROOT,'app','index.html'); OUT_DIR=os.path.join(ROOT,'telegram'); OUT=os.path.join(OUT_DIR,'index.html')
 TG_SCRIPT='<script src="https://telegram.org/js/telegram-web-app.js"></script>\n<script id="th-tg-boot">'
 SW_RE=re.compile(r'<script id="th-mvp-pwa-register">.*?</script>\n?',re.S)
 MANIFEST_RE=re.compile(r'<link[^>]*rel="manifest"[^>]*/?>\s*',re.S)
