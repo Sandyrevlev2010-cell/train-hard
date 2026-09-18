@@ -3,8 +3,8 @@
  * Задача: изолировать данные разных Telegram-аккаунтов на одном устройстве.
  *
  * Безопасность: initData без серверной проверки НЕ является доказательством
- * личности (см. docs/TELEGRAM-MINIAPP.md) — id используется только как
- * локальный суффикс ключа хранилища. В обычном браузере скрипт ничего не делает. */
+ * личности — id используется только как локальный суффикс ключа хранилища.
+ */
 (function () {
   'use strict';
   try {
@@ -15,9 +15,7 @@
     var SESSION = 'trainhard_react_session';
     var cur = null;
     try { cur = localStorage.getItem(SESSION); } catch (e) {}
-    if (cur === key) return;                       /* уже в этом аккаунте */
-    /* первый заход под этим Telegram-аккаунтом: унаследовать гостевые
-       прогресс/настройки, чтобы пользователь ничего не потерял */
+    if (cur === key) return;
     try {
       var guest = localStorage.getItem('trainhard_react_data_guest');
       if (guest && !localStorage.getItem('trainhard_react_data_' + key)) {
@@ -25,5 +23,5 @@
       }
     } catch (e) {}
     try { localStorage.setItem(SESSION, key); } catch (e) {}
-  } catch (e) { /* обычный браузер или приватный режим — работаем как есть */ }
+  } catch (e) {}
 })();

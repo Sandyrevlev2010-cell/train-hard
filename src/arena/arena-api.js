@@ -1,465 +1,61 @@
 /* =============================================================
  * Train Hard — ARENA API client
  *
- * Identity:
- *   Telegram.WebApp.initData
- *
- * Session:
- *   short-lived Bearer token cached in localStorage
- *
- * IMPORTANT:
- *   This client adds /api to Arena/backend routes.
+ * Identity comes only from signed Telegram initData. The client never
+ * sends a user_id as an authority. Bearer session is only a cache;
+ * the server resolves the actual user from the session.
  * ============================================================= */
-
 (function () {
   'use strict';
-
   var cfg = window.TRAINHARD_ARENA || {};
-
-  var base = String(
-    cfg.apiBase ||
-    'https://train-hard.onrender.com'
-  ).replace(/\/+$/, '');
-
+  var base = String(cfg.apiBase || '').replace(/\/+$/, '');
   var TOKEN_KEY = 'trainhard_api_session';
-
   var token = null;
   var user = null;
 
-
-  /* =========================================================
-   Telegram
-   ========================================================= */
-
-  function tg() {
-    try {
-      return window.Telegram &&
-        window.Telegram.WebApp
-        ? window.Telegram.WebApp
-        : null;
-    } catch (e) {
-      return null;
-    }
-  }
-
-
-  function initData() {
-    var app = tg();
-
-    if (
-      app &&
-      typeof app.initData === 'string' &&
-      app.initData
-    ) {
-      return app.initData;
-    }
-
-    return '';
-  }
-
-
-  function startParam() {
-    var app = tg();
-
-    try {
-      if (
-        app &&
-        app.initDataUnsafe &&
-        typeof app.initDataUnsafe.start_param === 'string'
-      ) {
-        return app.initDataUnsafe.start_param;
-      }
-    } catch (e) {}
-
-    return '';
-  }
-
-
-  /* =========================================================
-   Session
-   ========================================================= */
+  function tg() { try { return window.Telegram && window.Telegram.WebApp; } catch (e) { return null; } }
+  function initData() { var w=tg(); return (w && typeof w.initData==='string' && w.initData) ? w.initData : ''; }
+  function startParam() { var w=tg(); return (w && w.initDataUnsafe && typeof w.initDataUnsafe.start_param==='string') ? w.initDataUnsafe.start_param : ''; }
 
   function loadCached() {
     try {
-      var raw =
-        window.localStorage.getItem(TOKEN_KEY);
-
-      if (!raw) return;
-
-      var data = JSON.parse(raw);
-
-      if (
-        data &&
-        typeof data.token === 'string' &&
-        data.token &&
-        Number(data.expires_at || 0) > Date.now()
-      ) {
-        token = data.token;
-        user = data.user || null;
-      }
-    } catch (e) {
-      token = null;
-      user = null;
-    }
+      var raw=window.localStorage.getItem(TOKEN_KEY); if(!raw)return;
+      var v=JSON.parse(raw);
+      if(v&&typeof v.token==='string'&&Number(v.expires_at||0)>Date.now()){token=v.token;user=v.user||null;}
+    } catch(e){}
   }
-
-
   function saveCached() {
-    try {
-      window.localStorage.setItem(
-        TOKEN_KEY,
-        JSON.stringify({
-          token: token,
-          user: user,
-          expires_at:
-            Date.now() + 25 * 86400000
-        })
-      );
-    } catch (e) {}
+    try { window.localStorage.setItem(TOKEN_KEY,JSON.stringify({token:token,user:user,expires_at:Date.now()+25*86400000})); } catch(e){}
   }
-
-
-  function clearCached() {
-    token = null;
-    user = null;
-
-    try {
-      window.localStorage.removeItem(
-        TOKEN_KEY
-      );
-    } catch (e) {}
-  }
-
-
   loadCached();
 
-
-  /* =========================================================
-   Network
-   ========================================================= */
-
-  function rawFetch(url, options) {
-    if (
-      typeof window.fetch === 'function'
-    ) {
-      return window.fetch(url, options);
-    }
-
-    return Promise.reject(
-      new Error('fetch is unavailable')
-    );
+  function rawFetch(url,opts){ if(typeof window.fetch==='function')return window.fetch(url,opts); return Promise.reject(new Error('no-fetch')); }
+  async function authenticate(){
+    var id=initData(); if(!id)return {ok:false,reason:'telegram-required'};
+    var r; try { r=await rawFetch(base+'/api/auth/telegram',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({initData:id})}); }
+    catch(e){return {ok:false,reason:'network'};}
+    if(!r.ok)return {ok:false,reason:'auth-'+r.status};
+    var j; try{j=await r.json();}catch(e){return {ok:false,reason:'bad-json'};}
+    token=j.token;user=j.user||null;saveCached();return {ok:true,user:user};
+  }
+  async function request(method,path,body){
+    if(!token){var a=await authenticate();if(!a.ok)return {ok:false,status:0,reason:a.reason,body:null};}
+    var doCall=async function(){var headers={'Authorization':'Bearer '+token};if(body!==undefined)headers['Content-Type']='application/json';return rawFetch(base+path,{method:method,headers:headers,body:body!==undefined?JSON.stringify(body):undefined});};
+    var res;try{res=await doCall();}catch(e){return {ok:false,status:0,reason:'network',body:null};}
+    if(res.status===401){token=null;user=null;var re=await authenticate();if(!re.ok)return {ok:false,status:0,reason:re.reason,body:null};try{res=await doCall();}catch(e){return {ok:false,status:0,reason:'network',body:null};}}
+    var json=null;try{json=await res.json();}catch(e){}
+    return {ok:res.ok,status:res.status,body:json};
   }
 
-
-  /* =========================================================
-   Telegram authentication
-   ========================================================= */
-
-  async function authenticate() {
-    var data = initData();
-
-    if (!data) {
-      return {
-        ok: false,
-        reason: 'telegram-required'
-      };
-    }
-
-    var response;
-
-    try {
-      response = await rawFetch(
-        base + '/api/auth/telegram',
-        {
-          method: 'POST',
-
-          headers: {
-            'Content-Type':
-              'application/json'
-          },
-
-          body: JSON.stringify({
-            initData: data
-          })
-        }
-      );
-    } catch (error) {
-      return {
-        ok: false,
-        reason: 'network'
-      };
-    }
-
-
-    if (!response.ok) {
-      return {
-        ok: false,
-        reason:
-          'auth-' + response.status,
-        status: response.status
-      };
-    }
-
-
-    var json;
-
-    try {
-      json = await response.json();
-    } catch (error) {
-      return {
-        ok: false,
-        reason: 'bad-json'
-      };
-    }
-
-
-    if (
-      !json ||
-      typeof json.token !== 'string' ||
-      !json.token
-    ) {
-      return {
-        ok: false,
-        reason: 'invalid-auth-response'
-      };
-    }
-
-
-    token = json.token;
-    user = json.user || null;
-
-    saveCached();
-
-    return {
-      ok: true,
-      user: user
-    };
-  }
-
-
-  /* =========================================================
-   API request
-   ========================================================= */
-
-  async function request(
-    method,
-    path,
-    body
-  ) {
-
-    /*
-     * Arena UI uses:
-     *
-     *   /groups
-     *   /groups/:id
-     *   /arena/stats
-     *   /invites/:token/join
-     *
-     * Backend actually exposes:
-     *
-     *   /api/groups
-     *   /api/groups/:id
-     *   /api/arena/stats
-     *   /api/invites/:token/join
-     *
-     * So we add /api here.
-     */
-
-    var normalizedPath =
-      String(path || '');
-
-    if (
-      !normalizedPath.startsWith('/')
-    ) {
-      normalizedPath =
-        '/' + normalizedPath;
-    }
-
-
-    /*
-     * Do not add /api twice.
-     */
-
-    var apiPath =
-      normalizedPath === '/api' ||
-      normalizedPath.indexOf('/api/') === 0
-        ? normalizedPath
-        : '/api' + normalizedPath;
-
-
-    /* Authenticate if necessary */
-
-    if (!token) {
-      var auth =
-        await authenticate();
-
-      if (!auth.ok) {
-        return {
-          ok: false,
-          status: 0,
-          reason: auth.reason,
-          body: null
-        };
-      }
-    }
-
-
-    async function doRequest() {
-      var headers = {
-        'Authorization':
-          'Bearer ' + token
-      };
-
-
-      if (body !== undefined) {
-        headers['Content-Type'] =
-          'application/json';
-      }
-
-
-      return rawFetch(
-        base + apiPath,
-        {
-          method: method,
-
-          headers: headers,
-
-          body:
-            body !== undefined
-              ? JSON.stringify(body)
-              : undefined
-        }
-      );
-    }
-
-
-    var response;
-
-
-    try {
-      response =
-        await doRequest();
-    } catch (error) {
-      return {
-        ok: false,
-        status: 0,
-        reason: 'network',
-        body: null
-      };
-    }
-
-
-    /*
-     * Session expired.
-     * Re-authenticate through Telegram
-     * and retry exactly once.
-     */
-
-    if (response.status === 401) {
-
-      clearCached();
-
-      var reauth =
-        await authenticate();
-
-      if (!reauth.ok) {
-        return {
-          ok: false,
-          status: 401,
-          reason: reauth.reason,
-          body: null
-        };
-      }
-
-
-      try {
-        response =
-          await doRequest();
-      } catch (error) {
-        return {
-          ok: false,
-          status: 0,
-          reason: 'network',
-          body: null
-        };
-      }
-    }
-
-
-    var json = null;
-
-    try {
-      json = await response.json();
-    } catch (e) {
-      json = null;
-    }
-
-
-    return {
-      ok: response.ok,
-      status: response.status,
-      body: json
-    };
-  }
-
-
-  /* =========================================================
-   Public API
-   ========================================================= */
-
-  window.__THAPI = {
-
-    available: function () {
-      return !!initData();
-    },
-
-
-    authenticate: authenticate,
-
-
-    request: request,
-
-
-    startParam: startParam,
-
-
-    user: function () {
-      return user;
-    },
-
-
-    token: function () {
-      return token;
-    },
-
-
-    _resetForTests: function () {
-      clearCached();
-    }
+  window.__THAPI={
+    available:function(){return !!initData();},
+    authenticate:authenticate,
+    request:request,
+    startParam:startParam,
+    user:function(){return user;},
+    token:function(){return token;},
+    _resetForTests:function(){token=null;user=null;try{window.localStorage.removeItem(TOKEN_KEY);}catch(e){}}
   };
 
-
-  /* =========================================================
-   Automatic authentication
-   ========================================================= */
-
-  setTimeout(
-    function () {
-
-      try {
-
-        if (
-          !token &&
-          initData()
-        ) {
-          authenticate()
-            .catch(function () {});
-        }
-
-      } catch (e) {}
-
-    },
-    0
-  );
-
+  setTimeout(function(){try{if(!token&&initData())authenticate().catch(function(){});}catch(e){}},0);
 })();
