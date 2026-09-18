@@ -81,9 +81,11 @@ async function ensureArenaStorage(store) {
         squat NUMERIC(6,2),
         bench NUMERIC(6,2),
         deadlift NUMERIC(6,2),
+        premium BOOLEAN NOT NULL DEFAULT FALSE,
         updated_at BIGINT NOT NULL
       )
     `);
+    await store.p.query('ALTER TABLE arena_stats ADD COLUMN IF NOT EXISTS premium BOOLEAN NOT NULL DEFAULT FALSE');
     await store.p.query('CREATE INDEX IF NOT EXISTS idx_arena_stats_updated ON arena_stats(updated_at)');
     // DB-level invariant: one user -> one group.
     await store.p.query('CREATE UNIQUE INDEX IF NOT EXISTS uq_group_members_one_group_per_user ON group_members(user_id)');
@@ -104,14 +106,15 @@ async function readStats(store, uid) {
       `SELECT squat::float8 AS squat,
               bench::float8 AS bench,
               deadlift::float8 AS deadlift,
+              premium,
               updated_at
          FROM arena_stats
         WHERE user_id=$1`,
       [uid]
     );
-    return r.rows[0] || { squat: null, bench: null, deadlift: null, updated_at: 0 };
+    return r.rows[0] || { squat: null, bench: null, deadlift: null, premium: false, updated_at: 0 };
   }
-  return store.arenaStats.get(uid) || { squat: null, bench: null, deadlift: null, updated_at: 0 };
+  return store.arenaStats.get(uid) || { squat: null, bench: null, deadlift: null, premium: false, updated_at: 0 };
 }
 
 async function saveStats(store, uid, body) {
@@ -131,6 +134,7 @@ async function saveStats(store, uid, body) {
        RETURNING squat::float8 AS squat,
                  bench::float8 AS bench,
                  deadlift::float8 AS deadlift,
+                 premium,
                  updated_at`,
       [uid, stats.squat, stats.bench, stats.deadlift, updated]
     );
@@ -138,9 +142,33 @@ async function saveStats(store, uid, body) {
   }
 
   if (!store.arenaStats) store.arenaStats = new Map();
-  const value = { ...stats, updated_at: updated };
+  const previous = store.arenaStats.get(uid) || {};
+  const value = { ...stats, premium: !!previous.premium, updated_at: updated };
   store.arenaStats.set(uid, value);
   return value;
+}
+
+async function savePremium(store, uid, premium) {
+  const value = !!premium;
+  if (store.p && typeof store.p.query === 'function') {
+    const r = await store.p.query(
+      `INSERT INTO arena_stats (user_id,squat,bench,deadlift,premium,updated_at)
+       VALUES ($1,NULL,NULL,NULL,$2,$3)
+       ON CONFLICT (user_id) DO UPDATE SET premium=EXCLUDED.premium
+       RETURNING squat::float8 AS squat,
+                 bench::float8 AS bench,
+                 deadlift::float8 AS deadlift,
+                 premium,
+                 updated_at`,
+      [uid, value, Date.now()]
+    );
+    return r.rows[0];
+  }
+  if (!store.arenaStats) store.arenaStats = new Map();
+  const previous = store.arenaStats.get(uid) || { squat:null, bench:null, deadlift:null, updated_at:0 };
+  const next = { ...previous, premium:value };
+  store.arenaStats.set(uid, next);
+  return next;
 }
 
 async function getGroupAndMember(store, gid, uid) {
@@ -156,6 +184,7 @@ async function listMemberStats(store, gid) {
   if (store.p && typeof store.p.query === 'function') {
     const r = await store.p.query(
       `SELECT gm.user_id,
+              gm.role,
               u.id,
               u.telegram_id,
               u.username,
@@ -165,6 +194,7 @@ async function listMemberStats(store, gid) {
               a.squat::float8 AS squat,
               a.bench::float8 AS bench,
               a.deadlift::float8 AS deadlift,
+              COALESCE(a.premium,false) AS premium,
               COALESCE(a.updated_at,0) AS updated_at
          FROM group_members gm
          JOIN users u ON u.id=gm.user_id
@@ -182,6 +212,7 @@ async function listMemberStats(store, gid) {
     const s = await readStats(store, m.user_id);
     rows.push({
       user_id: m.user_id,
+      role: m.role,
       id: u.id,
       telegram_id: u.telegram_id,
       username: u.username,
@@ -191,6 +222,7 @@ async function listMemberStats(store, gid) {
       squat: s.squat,
       bench: s.bench,
       deadlift: s.deadlift,
+      premium: !!s.premium,
       updated_at: Number(s.updated_at || 0)
     });
   }
@@ -214,7 +246,8 @@ function makeBoards(rows) {
           username: row.username,
           first_name: row.first_name,
           last_name: row.last_name,
-          photo_url: row.photo_url
+          photo_url: row.photo_url,
+          premium: !!row.premium
         }
       });
     }
@@ -293,6 +326,19 @@ function createArenaHandler(app, store, options = {}) {
         return json(res, 405, { error: 'method not allowed' }, origin);
       }
 
+      if (pathname === '/api/arena/premium') {
+        const user = await currentUser(store, req);
+        if (!user) return json(res, 401, { error: 'unauthorized' }, origin);
+        if (req.method !== 'PUT') return json(res, 405, { error: 'method not allowed' }, origin);
+        let body;
+        try { body = await readJson(req); }
+        catch (e) { return json(res, 400, { error: 'invalid json' }, origin); }
+        const premium = body && typeof body.premium === 'boolean' ? body.premium : null;
+        if (premium === null) return json(res, 400, { error: 'invalid premium value' }, origin);
+        const stats = await savePremium(store, user.id, premium);
+        return json(res, 200, { premium: !!stats.premium, stats }, origin);
+      }
+
       // One group per user. The DB unique index is the final invariant;
       // this lock prevents duplicate attempts within the same server instance.
       if (req.method === 'POST' && (pathname === '/api/groups' || /^\/api\/invites\/[^/]+\/join$/.test(pathname))) {
@@ -306,6 +352,25 @@ function createArenaHandler(app, store, options = {}) {
             return app(req, res);
           });
         }
+      }
+
+      const removeMatch = pathname.match(/^\/api\/groups\/([^/]+)\/members\/([^/]+)$/);
+      if (req.method === 'DELETE' && removeMatch) {
+        const gid = decodeURIComponent(removeMatch[1]);
+        const targetUid = decodeURIComponent(removeMatch[2]);
+        const user = await currentUser(store, req);
+        if (!user) return json(res, 401, { error: 'unauthorized' }, origin);
+        const gm = await getGroupAndMember(store, gid, user.id);
+        if (!gm) return json(res, 404, { error: 'not found' }, origin);
+        if (gm.group.owner_id !== user.id || gm.member.role !== 'OWNER') {
+          return json(res, 403, { error: 'owner only' }, origin);
+        }
+        if (targetUid === user.id) return json(res, 400, { error: 'owner cannot remove self' }, origin);
+        const target = await store.getMember(gid, targetUid);
+        if (!target) return json(res, 404, { error: 'member not found' }, origin);
+        if (target.role === 'OWNER') return json(res, 400, { error: 'cannot remove owner' }, origin);
+        await store.removeMember(gid, targetUid);
+        return json(res, 200, { ok: true, removed_user_id: targetUid }, origin);
       }
 
       const match = pathname.match(/^\/api\/groups\/([^/]+)\/leaderboard$/);
@@ -324,10 +389,25 @@ function createArenaHandler(app, store, options = {}) {
 
         const rows = await listMemberStats(store, gid);
         const boards = makeBoards(rows);
+        const members = rows.map(row => ({
+          user_id: row.user_id,
+          role: row.role || 'MEMBER',
+          premium: !!row.premium,
+          user: {
+            id: row.id,
+            telegram_id: row.telegram_id,
+            username: row.username,
+            first_name: row.first_name,
+            last_name: row.last_name,
+            photo_url: row.photo_url,
+            premium: !!row.premium
+          }
+        }));
         if (metric === 'ALL') {
           return json(res, 200, {
             metric: 'ALL',
             rule: 'value desc → updated_at asc → same place',
+            members,
             boards
           }, origin);
         }
