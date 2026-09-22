@@ -104,62 +104,36 @@
   }
 
   async function request(method, path, body) {
-    var headers = {
-      'Content-Type': 'application/json'
-    };
+    /* Единственный клиент Arena API — __THAPI.
+     * Он выполняет Telegram initData -> Bearer session,
+     * автоматически повторяет запрос после 401 и централизует /api. */
+    var api = window.__THAPI;
 
-    var initData = getInitData();
-    var session = getSession();
-
-    if (initData) {
-      headers['X-Telegram-Init-Data'] = initData;
-    }
-
-    if (session) {
-      headers.Authorization = 'Bearer ' + session;
-    }
-
-    var response = await fetch(API_BASE + path, {
-      method: method,
-      headers: headers,
-      credentials: 'include',
-      body: body === undefined ? undefined : JSON.stringify(body)
-    });
-
-    var text = await response.text();
-    var data = null;
-
-    try {
-      data = text ? JSON.parse(text) : null;
-    } catch (e) {
-      data = text;
-    }
-
-    if (!response.ok) {
-      var message =
-        data &&
-        typeof data === 'object' &&
-        (data.error || data.message);
-
-      var error = new Error(
-        message || ('HTTP ' + response.status)
-      );
-
-      error.status = response.status;
-      error.data = data;
-
+    if (!api || typeof api.request !== 'function') {
+      var error = new Error('API client unavailable');
+      error.status = 0;
       throw error;
     }
 
-    if (
-      data &&
-      typeof data === 'object' &&
-      data.token
-    ) {
-      setSession(String(data.token));
+    var result = await api.request(method, path, body);
+
+    if (!result || !result.ok) {
+      var message =
+        result && result.body &&
+        (result.body.error || result.body.message);
+
+      var error = new Error(
+        message ||
+        (result && result.reason) ||
+        ('HTTP ' + ((result && result.status) || 0))
+      );
+
+      error.status = result && result.status || 0;
+      error.data = result && result.body || null;
+      throw error;
     }
 
-    return data;
+    return result.body;
   }
 
   /* ---------------------------------------------------------
