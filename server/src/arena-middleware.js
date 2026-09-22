@@ -295,7 +295,7 @@ function createArenaHandler(app, store, options = {}) {
 
       // One group per user. The DB unique index is the final invariant;
       // this lock prevents duplicate attempts within the same server instance.
-      if (req.method === 'POST' && (pathname === '/api/groups' || /^\/api\/invites\/[^/]+\/join$/.test(pathname))) {
+      if (req.method === 'POST' && (pathname === '/api/groups' || /^\/api\/groups\/[^/]+\/join$/.test(pathname) || /^\/api\/invites\/[^/]+\/join$/.test(pathname))) {
         const user = await currentUser(store, req);
         if (user) {
           return withUserLock(user.id, async () => {
