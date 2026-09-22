@@ -28,8 +28,7 @@ npm install          # dev: jsdom, jsqr; optional: pg, canvas
 npm test             # 353 ✔ (см. «Tests»)
 ```
 
-`npm install` идемпотентен; `package-lock.json` зафиксирован. Optional-пакеты
-не обязательны: без `canvas` 3 QR-проверки challenges пропускаются (121/124),
+`npm install` идемпотентен; `package-lock.json` зафиксирован. Optional-пакеты не обязательны:
 без `pg` backend работает на MemoryStore.
 
 ## Development
