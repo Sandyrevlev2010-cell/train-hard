@@ -62,7 +62,7 @@ Telegram Mini App (frontend)          Backend (Node.js ≥18)         PostgreSQL
 | `POST /groups/:id/competitions` `{name, type, start_at, end_at}` | type ∈ TOTAL/SQUAT/BENCH/DEADLIFT/PR_PROGRESS |
 | `POST /competitions/:id/start` · `/finish` · `GET /standings` | жизненный цикл (OWNER/ADMIN) |
 | `POST /programs` `{name, level, frequency, weeks}` | программа (weeks — структура PROGRAM→PHASE→WEEK→WORKOUT→EXERCISE→SET) |
-| `POST /programs/:id/assign` `{group_id}` | назначить группе (OWNER/ADMIN) |
+| `POST /programs/:id/assign` `{group_id}` | владелец программы + OWNER/ADMIN группы |
 | `GET /programs/:id/schedule?1rm_squat&1rm_bench&1rm_deadlift&step` | раскладка %1ПМ с округлением к шагу (1.25/2.5/5) |
 | `GET /workouts/:id` · `PUT /workouts/:id` | получить/заменить свою тренировку |
 | `GET /groups/:id` · `POST /groups/:id/join` `{code}` | инфо группы для участника; вступление по коду |
