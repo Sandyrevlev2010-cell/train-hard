@@ -148,6 +148,28 @@
     document.head.appendChild(s);
   }
 
+
+  function ensureLauncher() {
+    try {
+      var old = document.querySelector('[aria-label="Arena"]');
+      if (old) old.setAttribute('data-th-arena-launcher-hidden', '1');
+      if (document.getElementById('th-arena-launcher')) return;
+      var style = document.createElement('style');
+      style.id = 'trainhard-arena-launcher-style';
+      style.textContent = "\n      .th-arena-launcher{position:fixed;right:14px;bottom:86px;z-index:99990;width:54px;height:54px;border:1px solid rgba(255,105,55,.55);border-radius:18px;background:linear-gradient(145deg,#ff4b22,#b81410);box-shadow:0 10px 30px rgba(0,0,0,.45),0 0 24px rgba(255,70,25,.22);display:flex;align-items:center;justify-content:center;color:#fff;font-size:27px;line-height:1;cursor:pointer;touch-action:manipulation}\n      .th-arena-launcher:active{transform:scale(.94)}\n      [aria-label=\"Arena\"][data-th-arena-launcher-hidden=\"1\"]{display:none!important}\n";
+      document.head.appendChild(style);
+      var btn = document.createElement('button');
+      btn.id = 'th-arena-launcher';
+      btn.className = 'th-arena-launcher';
+      btn.type = 'button';
+      btn.setAttribute('aria-label','Arena');
+      btn.setAttribute('title','Arena');
+      btn.textContent = '🔥';
+      btn.addEventListener('click', function(){ open(); });
+      document.body.appendChild(btn);
+    } catch (e) {}
+  }
+
   function createRoot() {
     if (root) return root;
     root = document.createElement('div');
@@ -492,6 +514,9 @@
   }
 
   async function open() {
+    ensureLauncher();
+    var launcher = document.getElementById('th-arena-launcher');
+    if (launcher) launcher.style.display = 'none';
     injectStyles(); initTelegram();
     if(!root) createRoot();
     setLoading(true);
@@ -510,8 +535,9 @@
     finally{setLoading(false);}
   }
 
-  function close(){destroyRoot();}
+  function close(){destroyRoot(); ensureLauncher(); var launcher=document.getElementById('th-arena-launcher'); if(launcher) launcher.style.display='flex';}
 
+  try { document.addEventListener('DOMContentLoaded', ensureLauncher); } catch (e) {}
   window.__THArena={open:open,close:close,refresh:open};
   window.TrainHardArena=window.__THArena;
 })();
