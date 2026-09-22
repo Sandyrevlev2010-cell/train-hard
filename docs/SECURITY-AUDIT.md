@@ -4,7 +4,6 @@
 Объект: текущая сборка `app/index.html` (single-file PWA), исходники `src/`, `sw.js`,
 `manifest.webmanifest` **и серверная часть `server/`** (итерация 4).
 Тесты — фактический прогон `npm test` от 2026-08-29 (итерация 5: ARENA),
-всего 353, все зелёные: challenge 124 · smoke 42 · payment 28 · no-storage 5 ·
 audit 24 · telegram 21 · arena 44 (фронтенд, 288) + backend 65 (`server/test/`:
 auth/IDOR/PR/лидерборд/соревнования/платежи/программы/sync/api-surface/e2e).
 Расклад и статус — `docs/BACKEND.md`, итог — `docs/FINAL-AUDIT.md`.
@@ -39,8 +38,6 @@ type=password>` и названия полей удалённого UI). Под�
 |---|---|---|---|---|---|---|
 | AUD-01 | MEDIUM | бандл (legacy), `app-integration.js` | Со времён удалённого логина в бандле осталась мёртвая register/login-логика с локальным хешем пароля (`thLocalPasswordHash`) и хранилищем `trainhard_react_accounts`; у ранних пользователей в localStorage могли остаться парольные хеши/устаревшие поля | Парольные данные пользователя лежали на устройстве без функциональной необходимости (мёртвый код) | Boot-time очистка `trainhard_react_accounts` (app-integration.js); UI-пути к функциям отсутствуют (экран логина удалён в MVP 1.0); `we()` — офлайн-заглушка (P1), сетевых вызовов нет | **FIXED** (данные), код задокументирован как dead (удаление из минифицированного бандла сопряжено с риском регресса) |
 | AUD-02 | LOW | P25 (`patches.py`), загрузчик профиля | Повреждённый профиль (`streak:"abc"`, `completedDays:[…]`, `records:"junk"`, `trainingPlan:"broken"`) загружался без нормализации типов | Кривой UI («Серия: abc»), потенциальные NaN в вычислениях | `thStreakFix` расширен до profile-guard: streak/bestStreak → конечные числа ≥0, completedDays → plain object, records → object, workoutLogs → array, trainingPlan → null|object | **FIXED** (тест C1: 0 runtime errors, приложение живо) |
-| AUD-03 | MEDIUM | `docs/SECURITY-HEADERS.md` | Рекомендация `Permissions-Policy: camera=()` блокировала бы QR-сканер челленджей (getUserMedia) на хостинге, следом за рекомендациями | Сканер QR не работал бы на «правильно» настроенном хостинге | `camera=(self)` во всех конфигах (nginx/Netlify/Cloudflare) + пояснение | **FIXED** |
-| AUD-04 | LOW | `docs/CHALLENGES.md` (докум.) | Нет | — | Проверки этой итерации добавлены в постоянный набор `tools/audit-test.js` (24 проверки) | **DONE** |
 
 ### Сводка ранее исправленного (iter. 1–2, актуально)
 
@@ -154,7 +151,6 @@ CSP не используются как замена заголовкам — �
 
 ```
 Payment / RuStore → Trusted Verification → Backend → Trusted Entitlement → PremiumManager
-LocalChallengeProvider → Future CloudChallengeProvider (интерфейс в ChallengeService)
 StorageService (localStorage) → Future API → PostgreSQL
 ```
 
