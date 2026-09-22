@@ -348,29 +348,6 @@ def patch_bundle(src):
     # --- P20: чип статуса без логина ---
     src = replace_once(src, "children:n.name||n.login}", "children:n.name||`Спортсмен`}", 'P20 chip-name')
 
-    # --- P21: аналитика — завершение тренировки ---
-    src = replace_once(
-        src,
-        "completeWorkout:M,",
-        "completeWorkout:(...thA)=>{try{window.__THAnalytics&&window.__THAnalytics.track(`workout_complete`)}catch{}return M(...thA)},",
-        'P21 analytics-complete')
-    src = replace_once(
-        src,
-        "completeWorkout:M,",
-        "completeWorkout:(...thA)=>{try{window.__THAnalytics&&window.__THAnalytics.track(`workout_complete`)}catch{}"
-        "try{window.__THChallenges&&window.__THChallenges.onWorkoutCompleted(thA[0],thA[1])}catch{}"
-        "return M(...thA)},",
-        'P21 analytics+challenges-complete')
-
-    # --- P23: Challenges-хук при добавлении рекорда (проходка) ---
-    src = replace_once(
-        src,
-        "addRecord:ye,",
-        "addRecord:(...thR)=>{const thRes=ye(...thR);"
-        "try{window.__THChallenges&&window.__THChallenges.onRecordAdded(thR[2],thR[3])}catch{}"
-        "return thRes},",
-        'P23 challenges-record-hook')
-
     # --- P22: аналитика — открытие тренировки/Premium ---
     src = replace_once(
         src,
