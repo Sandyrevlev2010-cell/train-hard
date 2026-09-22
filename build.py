@@ -134,9 +134,7 @@ def write_manifest():
 
 BANNED = [
     'api.trainhard.ru',
-    # «Я оплатил» убран из запретов: в TON-флоу кнопка «Я оплатил — проверить»
-    # запускает проверку транзакции в блокчейне (НЕ самоподтверждение);
-    # самоподтверждение по-прежнему запрещено (confirm-paid ниже)
+    # Самоподтверждение оплаты запрещено; Premium выдаётся только сервером.
     'confirm-paid',
     'cancel-paid',
     'th_demo',
@@ -166,10 +164,9 @@ REQUIRED = [
     '__THSync',
     '__THArena',
     'ENTITLEMENT_UNVERIFIED',
-    'Я оплатил — проверить',
-    'Оплата переводом TON',
-    'ton://transfer/',
-    'toncenter',
+    'Оплатить 299 ₽',
+    'Оплата через СБП',
+    'platega',
     'Оплата пока недоступна',
     '__THPrem',
     '__THAnalytics',
@@ -210,8 +207,7 @@ def verify(out):
     for r in REQUIRED:
         if r not in out:
             errs.append('ОЖИДАЛОСЬ, но не найдено: %r' % r)
-    # количество fetch в клиентском коде должно остаться только в будущем verifyUrl (payment-adapter)
-    # и в service worker файле (его тут нет) — проверим бандл:
+    # Сетевые секреты Platega не должны попадать в frontend bundle.
     return errs
 
 
