@@ -20,6 +20,9 @@ jobs:
         with:
           fetch-depth: 0
 
+      - name: Install build dependencies
+        run: python3 -m pip install --disable-pip-version-check pillow
+
       - name: Build
         run: |
           python3 build.py
