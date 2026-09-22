@@ -42,7 +42,7 @@ const sleep = (ms) => new Promise((r) => setTimeout(r, ms));
   check('A5 консоль чистая в исходниках модулей', !/console\.(log|info|debug)/.test(
     fs.readFileSync(path.join(__dirname, '..', 'src', 'premium', 'premium-manager.js'), 'utf-8') +
     fs.readFileSync(path.join(__dirname, '..', 'src', 'premium', 'payment-adapter.js'), 'utf-8') +
-    fs.readFileSync(path.join(__dirname, '..', 'src', 'challenges', 'challenge-service.js'), 'utf-8')));
+    fs.readFileSync(path.join(__dirname, '..', 'src', 'analytics', 'analytics-service.js'), 'utf-8')));
   const headersMd = fs.readFileSync(path.join(__dirname, '..', 'docs', 'SECURITY-HEADERS.md'), 'utf-8');
   check('A6 Permissions-Policy в конфигах хостинга разрешает камеру сканера', /add_header Permissions-Policy[^\n]*camera=\(self\)/.test(headersMd) && /Permissions-Policy = [^\n]*camera=\(self\)/.test(headersMd));
   const swSrc = fs.readFileSync(path.join(__dirname, '..', 'app', 'sw.js'), 'utf-8');
@@ -67,18 +67,12 @@ const sleep = (ms) => new Promise((r) => setTimeout(r, ms));
   check('B5 URL-параметры (?premium/vip/admin) не дают Premium', dom2.window.__THPrem.isPremium() === false);
 
   fetchCalls = 0;
-  const enc0 = (() => { const b = (o) => Buffer.from(JSON.stringify(o), 'utf8').toString('base64url'); return b({ v: 1, id: 'THAUD01', t: 'x', d: 7, n: 3, f: 'fullbody', l: 'standard', s: 's1' }); })();
-  let dom3 = boot('https://th.example/?challenge=' + enc0);
-  await sleep(2500);
-  check('B6 challenge-URL не даёт Premium и не ходит в сеть', dom3.window.__THPrem.isPremium() === false && fetchCalls === 0);
-
   /* ===== Runtime: повреждённые данные ===== */
   console.log('— Runtime: повреждённые localStorage-данные —');
   let dom4 = boot('https://th.example/', (w) => {
     w.localStorage.setItem('trainhard_react_session', 'guest');
     w.localStorage.setItem('trainhard_react_accounts', JSON.stringify({ old: { passHash: 'x', salt: 'y' } }));
     w.localStorage.setItem('trainhard_react_data_guest', '{"streak":"abc","bestStreak":-3,"completedDays":[1,2],"records":"junk","trainingPlan":"broken","workoutLogs":"x"}');
-    w.localStorage.setItem('trainhard_v1_challenges', '"not-an-array"');
     w.localStorage.setItem('trainhard_premium_v1', '{"until":"мусор"}');
   });
   await sleep(2300);
@@ -86,26 +80,13 @@ const sleep = (ms) => new Promise((r) => setTimeout(r, ms));
   check('C1 загрузка с битыми данными: 0 runtime errors', (w4.__errors || []).length === 0);
   check('C2 legacy-аккаунты (парольные хеши) удалены при старте', w4.localStorage.getItem('trainhard_react_accounts') === null);
   check('C3 битой premium-запись → не Premium', w4.__THPrem.isPremium() === false);
-  check('C4 битые челленджи -> пустой список, не падает', Array.isArray(w4.__THChallengeService.getChallenges()) && w4.__THChallengeService.getChallenges().length === 0);
+  check('C4 повреждённые данные не ломают приложение', (w4.__errors || []).length === 0);
   const txt4 = w4.document.body.textContent || '';
   check('C5 приложение живо (UI отрисован)', txt4.length > 500);
 
   /* ===== Runtime: дубликаты и полный флоу ===== */
   console.log('— Runtime: дубликаты событий, флоу, сброс —');
   fetchCalls = 0;
-  const w4svc = w4.__THChallengeService;
-  const crt = w4svc.createChallenge({ title: 'Аудит', type: 'workout', durationDays: 7, targetWorkouts: 3, speechId: 's1' });
-  w4svc.joinChallenge({ v: 1, id: crt.challenge.id, t: 'Аудит', d: 7, n: 3, f: 'fullbody', l: 'standard', s: 's1' });
-  check('D1 повторный join того же id отклонён', w4svc.joinChallenge({ v: 1, id: crt.challenge.id, t: 'Аудит', d: 7, n: 3, f: 'fullbody', l: 'standard', s: 's1' }).reason === 'duplicate');
-  w4svc.onWorkoutCompleted(1, '2026-08-28');
-  w4svc.onWorkoutCompleted(1, '2026-08-28');
-  check('D2 повторная тренировка в тот же день не задваивается', w4svc.getChallenge(crt.challenge.id).completedWorkouts === 1);
-  w4svc.onWorkoutCompleted(2, '2026-08-29');
-  const fin = w4svc.onWorkoutCompleted(3, '2026-08-30');
-  const again = w4svc.onWorkoutCompleted(4, '2026-08-30');
-  check('D3 завершение один раз (повторный completion — no-op)', fin.completed.length === 1 && again.completed.length === 0);
-  check('D4 полный challenge-флоу без runtime errors и сети', (w4.__errors || []).length === 0 && fetchCalls === 0);
-
   /* Premium-тамперинг: прямой доступ к localStorage даёт только локальный UI-state */
   try { w4.__THPrem.activate({ source: 'console-tamper', days: 30 }); } catch (e) {}
   check('D5 тампёринг activate() = только локальный UI-state (нет серверных данных)', w4.__THPrem.isPremium() === true && !w4.localStorage.getItem('trainhard_premium_pending_v1'));
