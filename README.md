@@ -1,7 +1,7 @@
 # Train Hard — Telegram Mini App для пауэрлифтинга
 
 Дневник тренировок (присед/жим/тяга), PR и Total, тренировочные программы,
-интервальный таймер, челленджи, Premium за TON — и **ARENA**: настоящие группы
+интервальный таймер, Premium за TON — и **ARENA**: настоящие группы
 и серверные лидерборды между реальными пользователями.
 
 Архитектура (§57):
@@ -83,7 +83,7 @@ entitlements. PR/Total не хранятся, а считаются из ист�
 ```
 frontend/smoke      42 ✔   frontend/security  24 ✔
 frontend/payments   28 ✔   frontend/telegram  21 ✔
-frontend/challenges 124 ✔  frontend/arena     44 ✔   ← ARENA + sync-bridge
+frontend/arena     44 ✔   ← ARENA + sync-bridge
 frontend/storage     5 ✔   backend/all        65 ✔   ← node --test server/test/
 ИТОГО: 353 ✔ / 0 ✘ (exit 0)
 ```
