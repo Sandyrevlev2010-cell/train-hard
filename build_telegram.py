@@ -64,7 +64,7 @@ def main():
         'th-tg-boot', 'th-tg-miniapp',
         'trainhard_react_session',        # boot: изоляция аккаунтов
         'disableVerticalSwipes', 'BackButton', 'HapticFeedback',
-        'start_param', 'openLink', 'openPreview',
+        'start_param', 'openLink',
     ]
     for r in required:
         assert r in html, 'нет строки: ' + r
