@@ -25,11 +25,7 @@
     'premium_open',        // открыли экран Premium
     'buy_click',           // нажали кнопку покупки
     'purchase_success',    // Premium активирован (после подтверждения)
-    'purchase_cancel',     // закрыли оплату без подтверждения
-    'challenge_created',   // создан челлендж
-    'challenge_shared',    // поделились челленджем/результатом
-    'challenge_joined',    // присоединились к челленджу
-    'challenge_completed'  // челлендж завершён
+    'purchase_cancel'      // закрыли оплату без подтверждения
   ];
 
   function nowDay() {
