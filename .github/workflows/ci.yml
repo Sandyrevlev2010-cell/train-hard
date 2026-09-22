@@ -1,0 +1,34 @@
+name: Train Hard CI
+
+on:
+  push:
+    branches:
+      - main
+      - feature/platega-sbp
+  pull_request:
+
+permissions:
+  contents: read
+
+jobs:
+  test-and-build:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 20
+          cache: npm
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.11'
+      - name: Install Node dependencies
+        run: npm ci
+      - name: Run full test suite
+        run: npm test
+      - name: Build frontend and Telegram bundle
+        run: npm run build
+      - name: Check generated artifacts
+        run: |
+          test -s app/index.html
+          test -s telegram/index.html

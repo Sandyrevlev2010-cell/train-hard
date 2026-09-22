@@ -4,7 +4,7 @@
  *   PORT                 — порт (по умолчанию 8787)
  *   BOT_TOKEN            — токен Telegram-бота (обязателен для /auth/telegram)
  *   DATABASE_URL         — PostgreSQL (пусто → MemoryStore, только dev/тесты)
- *   TON_ADDRESS / TON_AMOUNT_NANO / TON_PERIOD_DAYS — Premium-платежи
+ *   PLATEGA_MERCHANT_ID / PLATEGA_SECRET / PLATEGA_AMOUNT_RUB / PLATEGA_PERIOD_DAYS — Premium СБП
  *
  * Production: только за HTTPS-прокси (nginx/Caddy), см. docs/SECURITY-HEADERS.md. */
 'use strict';
@@ -31,10 +31,14 @@ async function main() {
     store,
     botToken,
     cors: { origin: corsOrigin || '*' },
-    ton: {
-      address: env.TON_ADDRESS || '',
-      amountNano: Number(env.TON_AMOUNT_NANO) || 0,
-      periodDays: Number(env.TON_PERIOD_DAYS) || 30,
+    platega: {
+      merchantId: env.PLATEGA_MERCHANT_ID || '',
+      secret: env.PLATEGA_SECRET || '',
+      amountRub: Number(env.PLATEGA_AMOUNT_RUB) || 299,
+      periodDays: Number(env.PLATEGA_PERIOD_DAYS) || 30,
+      apiBase: env.PLATEGA_API_BASE || 'https://app.platega.io',
+      returnUrl: env.PLATEGA_RETURN_URL || '',
+      failedUrl: env.PLATEGA_FAILED_URL || '',
       fetch: (typeof fetch === 'function') ? fetch : null
     }
   });

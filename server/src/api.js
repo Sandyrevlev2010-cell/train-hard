@@ -27,6 +27,7 @@ const {
 } = require('./util');
 
 const { verifyInitData } = require('./telegram');
+const crypto = require('crypto');
 
 const EXERCISES = ['squat', 'bench', 'deadlift'];
 
@@ -45,14 +46,18 @@ function createApp(opts) {
   const store = opts.store;
   const botToken = opts.botToken || '';
 
-  const ton = Object.assign(
+  const platega = Object.assign(
     {
-      address: '',
-      amountNano: 0,
+      merchantId: '',
+      secret: '',
+      amountRub: 299,
       periodDays: 30,
+      apiBase: 'https://app.platega.io',
+      returnUrl: '',
+      failedUrl: '',
       fetch: null
     },
-    opts.ton || {}
+    opts.platega || {}
   );
 
   const corsOrigin =
@@ -2529,165 +2534,321 @@ function createApp(opts) {
     }
   );
 
-  /* ---------- Premium: TON ---------- */
+  /* ---------- Premium: Platega / СБП ---------- */
+
+  function plategaConfigured() {
+    return !!(
+      platega.merchantId &&
+      platega.secret &&
+      platega.amountRub > 0 &&
+      platega.periodDays > 0 &&
+      platega.fetch
+    );
+  }
+
+  function plategaHeaders() {
+    return {
+      'X-MerchantId': String(platega.merchantId),
+      'X-Secret': String(platega.secret),
+      'Content-Type': 'application/json'
+    };
+  }
+
+  function paymentPayloadForUser(uid) {
+    return 'th:' + String(uid) + ':' + crypto.randomBytes(12).toString('hex');
+  }
+
+  function extractPayload(body) {
+    return String(
+      body && (
+        body.payload !== undefined ? body.payload :
+        body.Payload !== undefined ? body.Payload : ''
+      )
+    );
+  }
+
+  function extractStatus(body) {
+    return String(
+      body && (
+        body.status !== undefined ? body.status :
+        body.Status !== undefined ? body.Status : ''
+      )
+    ).toUpperCase();
+  }
+
+  function extractTransactionId(body) {
+    return String(
+      body && (
+        body.transactionId !== undefined ? body.transactionId :
+        body.transactionID !== undefined ? body.transactionID :
+        body.id !== undefined ? body.id :
+        body.Id !== undefined ? body.Id : ''
+      )
+    );
+  }
+
+  function payloadBelongsToUser(payload, uid) {
+    return payload.indexOf('th:' + String(uid) + ':') === 0;
+  }
+
+  async function activatePlatega(userId, transactionId) {
+    const current = await store.getEntitlement(userId);
+    if (current && current.label === transactionId && current.until > Date.now()) {
+      return current.until;
+    }
+
+    const until = Date.now() + Number(platega.periodDays) * 86400000;
+
+    await store.setEntitlement(userId, {
+      until,
+      source: 'platega-sbp',
+      label: transactionId
+    });
+
+    return until;
+  }
+
+  on(
+    'POST',
+    /^\/payments\/create$/,
+    async (c) => {
+      if (!plategaConfigured()) {
+        return {
+          code: 503,
+          body: { error: 'payments not configured' }
+        };
+      }
+
+      const clientLabel = String(c.body.client_label || '');
+      if (!/^[A-Za-z0-9_-]{1,128}$/.test(clientLabel)) {
+        return {
+          code: 400,
+          body: { error: 'invalid client label' }
+        };
+      }
+
+      return withIdem(
+        c.user,
+        c.body.idempotency_key || c.idemKey,
+        async () => {
+          const payload = paymentPayloadForUser(c.user.id);
+          const body = {
+            paymentMethod: 2,
+            paymentDetails: {
+              amount: Number(platega.amountRub),
+              currency: 'RUB'
+            },
+            description: 'Train Hard Premium на ' + Number(platega.periodDays) + ' дней',
+            payload,
+            metadata: {
+              userId: String(c.user.id),
+              userName: c.user.username || c.user.first_name || ''
+            }
+          };
+
+          if (platega.returnUrl) body.return = platega.returnUrl;
+          if (platega.failedUrl) body.failedUrl = platega.failedUrl;
+
+          let response;
+          let jsonBody;
+
+          try {
+            response = await platega.fetch(
+              String(platega.apiBase).replace(/\/+$/, '') + '/transaction/process',
+              {
+                method: 'POST',
+                headers: plategaHeaders(),
+                body: JSON.stringify(body)
+              }
+            );
+
+            jsonBody = await response.json();
+          } catch (e) {
+            return {
+              code: 502,
+              body: { error: 'payment provider unavailable' }
+            };
+          }
+
+          if (!response.ok || !jsonBody) {
+            return {
+              code: response && response.status === 401 ? 502 : 502,
+              body: { error: 'payment provider rejected request' }
+            };
+          }
+
+          const transactionId = extractTransactionId(jsonBody);
+          const url = String(jsonBody.redirect || jsonBody.url || '');
+
+          if (!transactionId || !/^https:\/\//.test(url)) {
+            return {
+              code: 502,
+              body: { error: 'invalid payment provider response' }
+            };
+          }
+
+          return {
+            code: 201,
+            body: {
+              ok: true,
+              payment_id: transactionId,
+              transaction_id: transactionId,
+              url,
+              status: extractStatus(jsonBody) || 'PENDING',
+              expires_in: jsonBody.expiresIn || null,
+              amount_rub: Number(platega.amountRub),
+              period_days: Number(platega.periodDays)
+            }
+          };
+        }
+      );
+    }
+  );
 
   on(
     'POST',
     /^\/payments\/verify$/,
     async (c) => {
-      if (
-        !ton.address ||
-        !ton.amountNano
-      ) {
+      if (!plategaConfigured()) {
         return {
           code: 503,
-          body: {
-            error:
-              'payments not configured'
-          }
+          body: { error: 'payments not configured' }
         };
       }
 
-      const label =
-        String(
-          c.body.label || ''
-        );
-
-      if (
-        !/^[A-Za-z0-9_-]{1,64}$/
-          .test(label)
-      ) {
+      const paymentId = String(c.body.payment_id || '');
+      if (!/^[A-Za-z0-9-]{8,128}$/.test(paymentId)) {
         return {
           code: 400,
-          body: {
-            error:
-              'invalid label'
-          }
+          body: { error: 'invalid payment id' }
         };
       }
 
-      /*
-       * Идемпотентность по label.
-       */
-      const ent =
-        await store.getEntitlement(
-          c.user.id
+      const current = await store.getEntitlement(c.user.id);
+      if (current && current.label === paymentId && current.until > Date.now()) {
+        return {
+          code: 200,
+          body: { ok: true, until: current.until, status: 'CONFIRMED' }
+        };
+      }
+
+      let response;
+      let tx;
+
+      try {
+        response = await platega.fetch(
+          String(platega.apiBase).replace(/\/+$/, '') +
+            '/transaction/' + encodeURIComponent(paymentId),
+          {
+            method: 'GET',
+            headers: {
+              'X-MerchantId': String(platega.merchantId),
+              'X-Secret': String(platega.secret)
+            }
+          }
         );
+        tx = await response.json();
+      } catch (e) {
+        return {
+          code: 502,
+          body: { error: 'payment provider unavailable' }
+        };
+      }
+
+      if (!response.ok || !tx) {
+        return {
+          code: 502,
+          body: { error: 'payment provider rejected request' }
+        };
+      }
+
+      const status = extractStatus(tx);
+      const payload = extractPayload(tx);
+      const amount = Number(
+        tx.paymentDetails && tx.paymentDetails.amount !== undefined
+          ? tx.paymentDetails.amount
+          : tx.amount
+      );
+
+      if (!payloadBelongsToUser(payload, c.user.id)) {
+        return {
+          code: 403,
+          body: { error: 'payment does not belong to user' }
+        };
+      }
 
       if (
-        ent &&
-        ent.label === label &&
-        ent.until > Date.now()
+        status !== 'CONFIRMED' ||
+        !Number.isFinite(amount) ||
+        amount < Number(platega.amountRub)
       ) {
         return {
           code: 200,
-          body: {
-            ok: true,
-            until:
-              ent.until
-          }
+          body: { ok: false, status: status || 'PENDING' }
         };
       }
 
-      const doFetch =
-        ton.fetch ||
-        (
-          typeof fetch ===
-          'function'
-            ? fetch
-            : null
-        );
-
-      if (!doFetch) {
-        return {
-          code: 503,
-          body: {
-            error:
-              'payments not configured'
-          }
-        };
-      }
-
-      let found = false;
-
-      try {
-        const r =
-          await doFetch(
-            'https://toncenter.com/api/v2/getTransactions?address=' +
-              encodeURIComponent(
-                ton.address
-              ) +
-              '&limit=50'
-          );
-
-        const j =
-          await r.json();
-
-        for (
-          const tx
-          of (
-            j &&
-            Array.isArray(
-              j.result
-            )
-              ? j.result
-              : []
-          )
-        ) {
-          if (
-            tx.in === true &&
-            String(
-              tx.message || ''
-            ) === label &&
-            Number(tx.value) >=
-              ton.amountNano
-          ) {
-            found = true;
-            break;
-          }
-        }
-      }
-
-      catch (e) {
-        return {
-          code: 502,
-          body: {
-            error:
-              'blockchain api unavailable'
-          }
-        };
-      }
-
-      if (!found) {
-        return {
-          code: 200,
-          body: {
-            ok: false
-          }
-        };
-      }
-
-      const until =
-        Date.now() +
-        ton.periodDays *
-          86400000;
-
-      await store.setEntitlement(
-        c.user.id,
-        {
-          until,
-          source:
-            'ton-verify',
-          label
-        }
-      );
+      const until = await activatePlatega(c.user.id, paymentId);
 
       return {
         code: 200,
-        body: {
-          ok: true,
-          until
-        }
+        body: { ok: true, until, status: 'CONFIRMED' }
+      };
+    }
+  );
+
+  on(
+    'POST',
+    /^\/payments\/platega\/callback$/,
+    async (c) => {
+      const merchant = String(c.reqHeaders && c.reqHeaders['x-merchantid'] || '');
+      const secret = String(c.reqHeaders && c.reqHeaders['x-secret'] || '');
+
+      if (
+        merchant !== String(platega.merchantId) ||
+        secret !== String(platega.secret)
+      ) {
+        return {
+          code: 401,
+          body: { error: 'unauthorized' }
+        };
+      }
+
+      const status = extractStatus(c.body);
+      const payload = extractPayload(c.body);
+      const transactionId = extractTransactionId(c.body);
+      const amount = Number(c.body.amount);
+
+      if (
+        status !== 'CONFIRMED' ||
+        !transactionId ||
+        !/^th:[^:]+:[a-f0-9]{24}$/.test(payload)
+      ) {
+        return {
+          code: 200,
+          body: { ok: true }
+        };
+      }
+
+      const parts = payload.split(':');
+      const userId = parts[1];
+
+      if (
+        !userId ||
+        !Number.isFinite(amount) ||
+        amount < Number(platega.amountRub)
+      ) {
+        return {
+          code: 200,
+          body: { ok: true }
+        };
+      }
+
+      await activatePlatega(userId, transactionId);
+
+      return {
+        code: 200,
+        body: { ok: true }
       };
     }
   );
@@ -2696,17 +2857,12 @@ function createApp(opts) {
     'GET',
     /^\/premium$/,
     async (c) => {
-      const ent =
-        await store.getEntitlement(
-          c.user.id
-        );
-
+      const ent = await store.getEntitlement(c.user.id);
       return {
         code: 200,
         body: {
           premium_until:
-            ent &&
-            ent.until > Date.now()
+            ent && ent.until > Date.now()
               ? ent.until
               : null
         }
@@ -2931,7 +3087,8 @@ function createApp(opts) {
     body,
     q,
     user,
-    idemKey
+    idemKey,
+    reqHeaders
   ) {
     for (
       const r
@@ -2957,7 +3114,8 @@ function createApp(opts) {
         q: q || {},
         m,
         user,
-        idemKey
+        idemKey,
+        reqHeaders
       });
     }
 
@@ -3097,15 +3255,27 @@ function createApp(opts) {
         }
       }
 
-      /*
-       * Health и Telegram auth
-       * доступны без Bearer-сессии.
-       */
+      /* Health, Telegram auth and the Platega callback are public endpoints.
+       * The callback is authenticated by Platega's X-MerchantId/X-Secret. */
+      if (pathname === '/payments/platega/callback') {
+        const out = await handleRoute(
+          req.method,
+          pathname,
+          body,
+          {},
+          null,
+          req.headers['idempotency-key'],
+          {
+            'x-merchantid': req.headers['x-merchantid'],
+            'x-secret': req.headers['x-secret']
+          }
+        );
+        return json(res, out.code, out.body, corsHeaders);
+      }
+
       if (
-        pathname !==
-          '/health' &&
-        pathname !==
-          '/auth/telegram'
+        pathname !== '/health' &&
+        pathname !== '/auth/telegram'
       ) {
         const user =
           await authUser(req);
@@ -3161,9 +3331,8 @@ function createApp(opts) {
           body,
           {},
           null,
-          req.headers[
-            'idempotency-key'
-          ]
+          req.headers['idempotency-key'],
+          req.headers
         );
 
       return json(
