@@ -3087,7 +3087,8 @@ function createApp(opts) {
     body,
     q,
     user,
-    idemKey
+    idemKey,
+    reqHeaders
   ) {
     for (
       const r
@@ -3114,7 +3115,7 @@ function createApp(opts) {
         m,
         user,
         idemKey,
-        reqHeaders: null
+        reqHeaders
       });
     }
 
@@ -3263,20 +3264,12 @@ function createApp(opts) {
           body,
           {},
           null,
-          req.headers['idempotency-key']
-        );
-        if (req.method === 'POST') {
-          /* route needs raw provider headers; invoke callback directly below */
-          const cb = routes.find(x => x.method === 'POST' && x.re.test('/payments/platega/callback'));
-          if (cb) {
-            const m = '/payments/platega/callback'.match(cb.re);
-            const result = await cb.fn({ body, q: {}, m, user: null, idemKey: req.headers['idempotency-key'], reqHeaders: {
-              'x-merchantid': req.headers['x-merchantid'],
-              'x-secret': req.headers['x-secret']
-            }});
-            return json(res, result.code, result.body, corsHeaders);
+          req.headers['idempotency-key'],
+          {
+            'x-merchantid': req.headers['x-merchantid'],
+            'x-secret': req.headers['x-secret']
           }
-        }
+        );
         return json(res, out.code, out.body, corsHeaders);
       }
 
@@ -3338,9 +3331,8 @@ function createApp(opts) {
           body,
           {},
           null,
-          req.headers[
-            'idempotency-key'
-          ]
+          req.headers['idempotency-key'],
+          req.headers
         );
 
       return json(
