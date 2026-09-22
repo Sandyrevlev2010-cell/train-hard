@@ -306,7 +306,7 @@
     h.push('Premium активируется только после подтверждения платежа сервером. Срок — ' + periodDays() + ' дней, без автопродления.');
     h.push('</div>');
 
-    mountEl.innerHTML = h.join('');    mountEl.innerHTML = h.join('');
+    mountEl.innerHTML = h.join('');
 
     /* события */
     mountEl.querySelector('.thp-x').addEventListener('click', function (e) {
@@ -314,22 +314,8 @@
       closeModal();
     });
 
-    /* QR-код ссылки перевода (локальный генератор, без внешних сервисов) */
-    try {
-      var qrCv = mountEl.querySelector('.thp-ton-qr canvas');
-      if (qrCv && pending && window.__THQR && Payments.transferUrl) {
-        var turl = Payments.transferUrl(pending.label);
-        var qc = window.__THQR.generate(turl);
-        var scale = 4, quiet = 2, dim = (qc.size + quiet * 2) * scale;
-        qrCv.width = dim; qrCv.height = dim;
-        var qx = qrCv.getContext('2d');
-        qx.fillStyle = '#fff'; qx.fillRect(0, 0, dim, dim);
-        qx.fillStyle = '#000';
-        for (var qy = 0; qy < qc.size; qy++)
-          for (var qx2 = 0; qx2 < qc.size; qx2++)
-            if (qc.modules[qy][qx2]) qx.fillRect((qx2 + quiet) * scale, (qy + quiet) * scale, scale, scale);
-      }
-    } catch (e) { /* без QR останутся копирование и ссылка */ }
+    /* Platega открывается отдельной HTTPS payment URL; QR для TON больше не используется. */
+
 
     function copyText(txt) {
       try {
@@ -355,11 +341,7 @@
             });
           } else if (a === 'restore') {
             doRestore();
-          } else if (a === 'copy-addr') {
-            copyText(tonAddr);
-          } else if (a === 'copy-label') {
-            copyText(pending ? pending.label : '');
-          }
+
         });
       })(act[i]);
     }
@@ -377,7 +359,7 @@
       var note = document.createElement('div');   /* безопасный DOM API, статический текст */
       note.className = 'thp-card thp-card--pay';
       var b = document.createElement('b'); b.textContent = 'Покупок не найдено';
-      var s = document.createElement('span'); s.textContent = 'На этом устройстве нет подтверждённой оплаты. Если ты платил — нажми «Я оплатил — проверить»: перевод ищется в блокчейне TON по коду платежа.';
+      var s = document.createElement('span'); s.textContent = 'На этом устройстве нет подтверждённой оплаты. Если ты уже платил — нажми «Проверить оплату»: сервер запросит актуальный статус транзакции Platega.';
       note.appendChild(b); note.appendChild(s);
       t.parentNode.insertBefore(note, t);
       setTimeout(function () { if (note.parentNode) note.parentNode.removeChild(note); }, 6000);
