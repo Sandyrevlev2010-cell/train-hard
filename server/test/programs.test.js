@@ -32,7 +32,7 @@ test('programs: валидация при создании', async () => {
   })).code, 400);
 });
 
-test('programs: назначение группе — только админ группы', async () => {
+test('programs: назначение группе — владелец программы + админ группы', async () => {
   const env = makeServer();
   const owner = await env.login({ id: 1 });
   const p = (await env.call('POST', '/programs', {
@@ -44,7 +44,7 @@ test('programs: назначение группе — только админ г
   await env.call('POST', '/invites/' + inv.body.code + '/join', { token: m.token, body: {} });
 
   const a = await env.call('POST', '/programs/' + p.id + '/assign', { token: m.token, body: { group_id: g.id } });
-  assert.equal(a.code, 403);
+  assert.equal(a.code, 404);
   const b = await env.call('POST', '/programs/' + p.id + '/assign', { token: owner.token, body: { group_id: g.id } });
   assert.equal(b.code, 201);
 });
