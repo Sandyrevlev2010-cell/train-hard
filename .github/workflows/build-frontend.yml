@@ -6,7 +6,6 @@ on:
     paths-ignore:
       - "app/**"
       - "telegram/**"
-      - ".github/workflows/build-frontend.yml"
   workflow_dispatch:
 
 permissions:
