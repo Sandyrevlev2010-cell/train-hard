@@ -303,8 +303,6 @@ def patch_bundle(src):
     # P17e: кнопка «Выйти из аккаунта»
     src = remove_call(src, 'children:`Выйти из аккаунта`}', '(0,N.jsx)(`button`', len(JSX), 'P17e remove-logout')
 
-    src = replace_once(
-        src,
     # --- P25: серия сбрасывается после 2 дней без тренировок (правило как у ge()
     #     в бандле), уже при загрузке профиля + флаг для уведомления ---
     src = replace_once(
