@@ -52,7 +52,6 @@
 ```
 frontend/smoke         42 ✔   (онбординг/тренировка/Premium/офлайн)
 frontend/payments      28 ✔   (TON: QR/ссылка/верификация/анти-реплей/отказы)
-frontend/challenges   124 ✔   (ссылки/QR/сканер/лимиты/FAB; 3 QR-декода требуют optional-canvas)
 frontend/storage        5 ✔   (недоступный localStorage)
 frontend/security      24 ✔   (секреты/URL/битые данные)
 frontend/telegram      21 ✔   (мок WebApp, тема, BackButton, haptics)
