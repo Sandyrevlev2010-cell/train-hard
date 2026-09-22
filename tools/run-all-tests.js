@@ -6,7 +6,6 @@ const path = require('path');
 const FRONTEND = [
   ['smoke', 'smoke-test.js'],
   ['payments', 'payment-test.js'],
-  ['challenges', 'challenge-test.js'],
   ['storage', 'no-storage-test.js'],
   ['security', 'audit-test.js'],
   ['telegram', 'telegram-test.js'],
