@@ -63,7 +63,7 @@ function createApp(opts) {
     'Access-Control-Allow-Methods':
       'GET,POST,PATCH,PUT,DELETE,OPTIONS',
     'Access-Control-Allow-Headers':
-      'Content-Type,Authorization,Idempotency-Key',
+      'Content-Type,Authorization,Idempotency-Key,X-Telegram-Init-Data',
     'Access-Control-Max-Age': '86400',
     'Vary': 'Origin'
   };
@@ -381,6 +381,20 @@ function createApp(opts) {
       fn
     });
   };
+
+  /* ---------- public service health ---------- */
+
+  on(
+    'GET',
+    /^\\/$/,
+    async () => ({
+      code: 200,
+      body: {
+        ok: true,
+        service: 'trainhard-api'
+      }
+    })
+  );
 
   /* ---------- health ---------- */
 
