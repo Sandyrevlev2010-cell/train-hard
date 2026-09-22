@@ -48,6 +48,18 @@
     });
   }
 
+  function sync() {
+    var a = api();
+    if (!isConfigured() || !a || typeof a.request !== 'function') return Promise.resolve(null);
+    return a.request('GET', '/premium').then(function (r) {
+      if (!r || !r.ok || !r.body) return null;
+      return {
+        ok: true,
+        until: r.body.premium_until ? Number(r.body.premium_until) : 0
+      };
+    }).catch(function () { return null; });
+  }
+
   function verify(label) {
     if (!isConfigured() || !LABEL_RE.test(label || '')) return Promise.resolve(null);
     var p = pending();
@@ -69,6 +81,7 @@
     transferUrl: function () { return ''; },
     open: open,
     verify: verify,
+    sync: sync,
     savePending: savePending,
     clearPending: clearPending,
     pending: pending,
