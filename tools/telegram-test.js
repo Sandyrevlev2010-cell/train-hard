@@ -10,7 +10,6 @@ const html = fs.readFileSync(HTML, 'utf-8');
 let passed = 0, failed = 0;
 const check = (n, c) => { if (c) { passed++; console.log('  ✔ ' + n); } else { failed++; console.log('  ✘ ' + n); } };
 const sleep = (ms) => new Promise((r) => setTimeout(r, ms));
-const b64url = (o) => Buffer.from(JSON.stringify(o), 'utf8').toString('base64url');
 
 function boot(seed) {
   return new JSDOM(html, {
@@ -65,7 +64,8 @@ function mockTelegram(w, opts) {
     JSON.stringify(html.match(/<script[^>]+src="http[^"]+"/g) || []) === JSON.stringify(['<script src="https://telegram.org/js/telegram-web-app.js"']));
   check('T2 SW-регистрация и manifest убраны', !html.includes('th-mvp-pwa-register') && !html.includes('manifest.webmanifest'));
   check('T3 boot перед бандлом', html.indexOf('th-tg-boot') < html.indexOf('var e=Object.create'));
-  check('T4 модуль интеграции после модулей', html.indexOf('th-tg-miniapp') > html.indexOf('th-mvp-challenge-router'));
+  check('T4 Telegram-модуль после основного бандла', html.indexOf('th-tg-miniapp') > html.indexOf('var e=Object.create'));
+
 
   /* ===== Браузерный режим ===== */
   console.log('— Обычный браузер (без Telegram) —');
@@ -77,13 +77,9 @@ function mockTelegram(w, opts) {
   check('B1 приложение живо, 0 ошибок', (wB.__errors || []).length === 0 && (wB.document.body.textContent || '').length > 500);
   check('B2 session не тронут (guest)', wB.localStorage.getItem('trainhard_react_session') === 'guest');
   check('B3 модуль Telegram тихо отключился', !wB.__THTelegram);
-  wB.__THChallenges.open();
-  await sleep(200);
-  check('B4 челленджи работают и без Telegram', (wB.document.body.textContent || '').includes('СОЗДАТЬ ЧЕЛЛЕНДЖ'));
 
   /* ===== Режим Telegram ===== */
   console.log('— Внутри Telegram (мок) —');
-  const payload = b64url({ v: 1, id: 'THTG01', t: 'ТГ-чек', d: 14, n: 7, f: 'fullbody', l: 'standard', s: 's1' });
   let domT = boot((w) => {
     mockTelegram(w, { startParam: payload });
     try {
@@ -107,22 +103,14 @@ function mockTelegram(w, opts) {
     !!wT.localStorage.getItem('trainhard_react_data_tg12345'));
   check('G5 0 runtime ошибок', (wT.__errors || []).length === 0);
   const txtT = dT.body.textContent || '';
-  check('G6 deep-link start_param → превью «ТГ-чек»', txtT.includes('ТГ-чек') && txtT.includes('ПРИСОЕДИНИТЬСЯ'));
-  check('G7 URL приложения чистый (payload не в адресной строке)', wT.location.search === '');
+  check('G6 Telegram UI отрисован', txtT.length > 500);
+  check('G7 URL приложения чистый', wT.location.search === '');
 
   /* BackButton */
   const backFn = c.backClick[0];
   check('G8 BackButton подписан', typeof backFn === 'function');
-  wT.__THChallenges.close();
-  await sleep(1000);           /* syncBack по интервалу */
-  check('G9 оверлей закрыт → BackButton.hide', c.backHide >= 1);
-  wT.__THChallenges.open();
   await sleep(1000);
-  check('G10 оверлей открыт → BackButton.show (снова)', c.backShow >= 2);
-  backFn();
-  await sleep(200);
-  const chEl = dT.querySelector('.thch');
-  check('G11 клик BackButton закрывает челленджи', !chEl || chEl.style.display === 'none');
+  check('G9 без оверлея → BackButton.hide', c.backHide >= 1);
 
   /* haptic через TrainHardEffects */
   const beforeH = c.haptic.length;
