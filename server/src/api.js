@@ -386,7 +386,7 @@ function createApp(opts) {
 
   on(
     'GET',
-    /^\\/$/,
+    /^\/$/,
     async () => ({
       code: 200,
       body: {
