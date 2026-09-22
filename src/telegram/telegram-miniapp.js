@@ -10,7 +10,7 @@
  *  • тема: тёмный header/фон под дизайн приложения;
  *  • disableVerticalSwipes + overscroll-behavior — без случайного
  *    закрытия свайпом при скролле тренировок;
- *  • BackButton Telegram закрывает открытые оверлеи (челленджи/таймер);
+ *  • BackButton Telegram закрывает открытый интервальный таймер;
  *  • HapticFeedback на достижениях и завершении челленджов;
  *  • deep-link: start_param с payload челленджа → превью;
  *  • window.open внешних http(s) ссылок → через openLink Telegram;
@@ -72,63 +72,35 @@
     }
   } catch (e) {}
 
-  /* ---------- BackButton: закрывает верхний оверлей ---------- */
+  /* ---------- BackButton: закрывает интервальный таймер ---------- */
   var back = null;
   try { back = app.BackButton; } catch (e) {}
 
-  function overlayOpen() {
+  function timerOpen() {
     try {
-      var ch = document.querySelector('.thch');
-      if (ch && ch.style.display !== 'none') return 'challenges';
       var tm = document.querySelector('.thit');
-      if (tm && tm.style.display !== 'none') return 'timer';
-    } catch (e) {}
-    return null;
+      return !!(tm && tm.style.display !== 'none');
+    } catch (e) { return false; }
   }
 
   function syncBack() {
     if (!back) return;
-    try { overlayOpen() ? back.show() : back.hide(); } catch (e) {}
+    try { timerOpen() ? back.show() : back.hide(); } catch (e) {}
   }
 
   if (back) {
     try {
       back.onClick(function () {
-        var which = overlayOpen();
         try {
-          if (which === 'challenges' && window.__THChallenges) window.__THChallenges.close();
-          else if (which === 'timer') {
-            var x = document.querySelector('.thit-x');
-            if (x) x.click(); else if (window.__THTimer) window.__THTimer.close && window.__THTimer.close();
-          }
+          var x = document.querySelector('.thit-x');
+          if (x) x.click();
+          else if (window.__THTimer && window.__THTimer.close) window.__THTimer.close();
         } catch (e) {}
         setTimeout(syncBack, 50);
       });
     } catch (e) {}
-    /* синхронизировать видимость при открытых/закрытых оверлеях */
     setInterval(syncBack, 800);
   }
-
-  /* ---------- deep-link: start_param → челлендж ---------- */
-  function payloadFrom(text) {
-    try {
-      text = String(text == null ? '' : text).trim();
-      var m = text.match(/[?&]challenge=([A-Za-z0-9_-]+)/) || text.match(/#challenge=([A-Za-z0-9_-]+)/);
-      if (m) return m[1];
-      if (/^[A-Za-z0-9_-]{20,600}$/.test(text)) return text;
-    } catch (e) {}
-    return null;
-  }
-
-  try {
-    var sp = app.initDataUnsafe && app.initDataUnsafe.start_param;
-    var pl = payloadFrom(sp);
-    if (pl && window.__THChallenges) {
-      setTimeout(function () {
-        try { window.__THChallenges.openPreview(pl); syncBack(); } catch (e) {}
-      }, 600);
-    }
-  } catch (e) {}
 
   /* ---------- внешние ссылки — через openLink Telegram ---------- */
   try {
