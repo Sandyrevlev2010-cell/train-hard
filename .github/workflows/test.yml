@@ -11,7 +11,7 @@ permissions:
   contents: read
 
 jobs:
-  test:
+  frontend:
     runs-on: ubuntu-latest
     steps:
       - name: Checkout
@@ -23,5 +23,20 @@ jobs:
           cache: npm
       - name: Install dependencies
         run: npm ci
-      - name: Run full test suite
-        run: npm test
+      - name: Frontend tests
+        run: timeout 5m npm run test:frontend
+
+  backend:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+      - name: Setup Node
+        uses: actions/setup-node@v4
+        with:
+          node-version: 24
+          cache: npm
+      - name: Install dependencies
+        run: npm ci
+      - name: Backend tests
+        run: timeout 5m npm run test:backend
