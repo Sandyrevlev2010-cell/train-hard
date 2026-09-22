@@ -9,10 +9,15 @@ const BOT_TOKEN = '7' + '0'.repeat(45);   /* фейковый, только фо
 function makeServer(opts) {
   const o = opts || {};
   const store = o.store || new MemoryStore();
-  const ton = 'ton' in o ? o.ton : {
-    address: 'UQTEST', amountNano: 1000000000, periodDays: 30, fetch: null
+  const platega = 'platega' in o ? o.platega : {
+    merchantId: 'merchant-test',
+    secret: 'secret-test',
+    amountRub: 299,
+    periodDays: 30,
+    apiBase: 'https://app.platega.test',
+    fetch: null
   };
-  const handler = createApp({ store, botToken: o.botToken || BOT_TOKEN, ton });
+  const handler = createApp({ store, botToken: o.botToken || BOT_TOKEN, platega });
 
   /* req/res заглушки поверх handler(req,res) */
   async function call(method, url, q) {
