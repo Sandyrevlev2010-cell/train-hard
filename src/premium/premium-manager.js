@@ -143,6 +143,10 @@
     if (isPremium()) return { status: 'active', until: until() };
     var p = readPending();
     if (p && p.label && paymentsReady()) return { status: 'verifying', label: p.label };
+    if (Payments && Payments.pending) {
+      var pp = Payments.pending();
+      if (pp && pp.label && paymentsReady()) return { status: 'verifying', label: pp.label };
+    }
     return { status: 'none' };
   }
 
@@ -157,15 +161,37 @@
   function clearPending() { if (Storage) Storage.remove(PENDING_KEY); }
 
   /* ---------- покупка ---------- */
-  function checkout() {
+  async function checkout() {
     var a = Analytics(); if (a) a.track('buy_click');
     if (!paymentsReady()) return { ok: false, reason: 'payments-not-configured' };
 
     var label = Payments.newLabel();
-    savePending(label);
+    var res = await Payments.open(label);
+    if (!res || !res.ok) return res || { ok: false, reason: 'payment-create-failed' };
+
+    if (Payments.savePending) {
+      Payments.savePending({
+        label: label,
+        payment_id: res.paymentId || '',
+        transaction_id: res.transactionId || '',
+        at: Date.now()
+      });
+    }
+
     rerender();
-    var res = Payments.open(label);
-    if (!res.ok && res.blocked) return { ok: false, reason: 'popup-blocked', url: res.url };
+
+    try {
+      if (res.url) {
+        if (window.Telegram && window.Telegram.WebApp && window.Telegram.WebApp.openLink) {
+          window.Telegram.WebApp.openLink(res.url);
+        } else {
+          window.open(res.url, '_blank', 'noopener,noreferrer');
+        }
+      }
+    } catch (e) {
+      return { ok: false, reason: 'open-failed', url: res.url };
+    }
+
     return { ok: true, label: label };
   }
 
@@ -227,13 +253,12 @@
     var active = isPremium();
     var ready = paymentsReady();
     var pending = readPending();
-    var pay = c.payments || {};
-    var tonAddr = (typeof pay.tonAddress === 'string' && /^[A-Za-z0-9_-]{48}$/.test(pay.tonAddress)) ? pay.tonAddress : '';
-    var tonAmt = isFinite(Number(pay.tonAmount)) && Number(pay.tonAmount) > 0 ? Number(pay.tonAmount) : 0;
-    var walletUrl = (pending && Payments && Payments.transferUrl) ? Payments.transferUrl(pending.label) : '';
+    if (Payments && Payments.pending) {
+      var pp = Payments.pending();
+      if (pp && pp.label) pending = { label: pp.label, at: pp.at || Date.now() };
+    }
     var h = [];
 
-    /* Шапка */
     h.push('<div class="thp-head"><div><div class="thp-kicker">Train Hard</div><div class="thp-title">' + (active ? 'Premium активен' : 'Premium') + '</div></div>');
     h.push('<button class="thp-x" aria-label="Закрыть">✕</button></div>');
 
@@ -245,68 +270,43 @@
       h.push('</div>');
       if (ready) h.push('<button class="thp-buy" data-act="buy">Продлить на ' + periodDays() + ' дней · ' + esc(c.priceLabel) + '</button>');
     } else {
-      /* преимущества — только реально существующий контент */
       h.push('<div class="thp-sub">Что входит в Premium</div>');
-      h.push('<div class="thp-card">');
-      h.push('<ul class="thp-list">');
+      h.push('<div class="thp-card"><ul class="thp-list">');
       h.push('<li><b>Питание с КБЖУ</b><span>Готовое меню на 7 дней и норма калорий под твой вес и цель</span></li>');
       h.push('<li><b>Old School</b><span>Программы Арнольда, Ронни Колемана и Кевина Леврона</span></li>');
       h.push('<li><b>AI-сплит</b><span>Сбалансированный сплит для набора объёма</span></li>');
       h.push('<li><b>Поддержка проекта</b><span>Тренировки, таймеры и прогресс остаются бесплатными</span></li>');
       h.push('</ul></div>');
-
       h.push('<div class="thp-sub">Бесплатно и без подписки</div>');
       h.push('<div class="thp-card"><div class="thp-free">Программы силы и выносливости · конструктор тренировок · таймеры · локальный прогресс и рекорды · AI-тренер · база знаний</div></div>');
-
       h.push('<div class="thp-price"><span class="thp-price-val">' + esc(c.priceLabel) + '</span><span class="thp-price-per">за ' + periodDays() + ' дней · разовый платёж, без автосписаний</span></div>');
 
       if (uiState.verifying) {
         h.push('<div class="thp-card thp-card--pay"><b>Проверяем оплату…</b><span>Сверяем платёж с сервером, это несколько секунд.</span></div>');
       } else if (uiState.verifyFailed) {
-        h.push('<div class="thp-card thp-card--pay"><b>Оплата не подтверждена</b><span>Подписка не активирована. Перевод идёт в блокчейне до минуты — проверь код платежа в комментарии и нажми «Проверить ещё раз» через пару минут.</span></div>');
-        h.push('<button class="thp-buy" data-act="restore">Проверить ещё раз</button>');
+        h.push('<div class="thp-card thp-card--pay"><b>Оплата ещё не подтверждена</b><span>Если ты только что оплатил, подожди немного и нажми «Проверить оплату» ещё раз.</span></div>');
+        h.push('<button class="thp-buy" data-act="restore">Проверить оплату</button>');
       } else if (uiState.verifyUnavailable) {
-        h.push('<div class="thp-card thp-card--pay"><b>Проверка подписки временно недоступна</b><span>Не удалось связаться с сервером подтверждения. Подписка не активирована — попробуй «Восстановить покупку» позже.</span></div>');
-        h.push('<button class="thp-buy" data-act="restore">Проверить ещё раз</button>');
+        h.push('<div class="thp-card thp-card--pay"><b>Проверка временно недоступна</b><span>Сервер не смог получить статус платежа. Premium не активирован.</span></div>');
+        h.push('<button class="thp-buy" data-act="restore">Проверить оплату</button>');
       } else if (pending) {
-        /* TON-перевод: адрес + сумма + код платежа + QR.
-           Активация — ТОЛЬКО подтверждением транзакции в блокчейне. */
-        h.push('<div class="thp-card thp-card--pay"><b>Оплата переводом TON</b><span>Переведи <b>' + tonAmt + ' TON</b> на адрес проекта и укажи в комментарии к переводу код платежа — по нему платёж будет зачтён.</span></div>');
-        h.push('<div class="thp-card thp-ton">');
-        h.push('<div class="thp-ton-lbl">Код платежа (комментарий к переводу)</div>');
-        h.push('<div class="thp-ton-code">' + esc(pending.label) + '</div>');
-        h.push('<div class="thp-ton-lbl">Адрес кошелька TON</div>');
-        h.push('<div class="thp-ton-addr">' + esc(tonAddr) + '</div>');
-        h.push('<div class="thp-ton-lbl">Сумма</div><div class="thp-ton-amt">' + tonAmt + ' TON · за ' + periodDays() + ' дней</div>');
-        h.push('<div class="thp-ton-qr"><canvas aria-label="QR для оплаты"></canvas><div class="thp-ton-qrhint">QR открывает кошелёк с заполненными адресом, суммой и комментарием</div></div>');
-        h.push('<button class="thp-ghost" data-act="copy-addr">Скопировать адрес</button>');
-        h.push('<button class="thp-ghost" data-act="copy-label">Скопировать код платежа</button>');
-        if (walletUrl) h.push('<a class="thp-linkbtn" href="' + esc(walletUrl) + '">Открыть в кошельке</a>');
-        h.push('</div>');
-        h.push('<button class="thp-buy" data-act="restore">Я оплатил — проверить</button>');
+        h.push('<div class="thp-card thp-card--pay"><b>Оплата через СБП</b><span>Платёж открывается на защищённой странице Platega. Автосписаний нет.</span></div>');
+        h.push('<div class="thp-card"><div class="thp-ton-lbl">Код платежа</div><div class="thp-ton-code">' + esc(pending.label) + '</div></div>');
+        h.push('<button class="thp-buy" data-act="restore">Проверить оплату</button>');
       } else if (ready) {
-        h.push('<button class="thp-buy" data-act="buy">Оформить Premium · ' + esc(c.priceLabel) + '</button>');
+        h.push('<button class="thp-buy" data-act="buy">Оплатить ' + esc(c.priceLabel) + '</button>');
       } else {
-        /* оплата не настроена — честно, без фальшивых кнопок */
-        h.push('<div class="thp-card thp-card--pay"><b>Оплата пока недоступна.</b><span>Приём платежей подключается после настройки подтверждения. Платить пока не нужно — все базовые тренировки бесплатны.</span></div>');
-      }
-
-      if (uiState.popupUrl) {
-        h.push('<div class="thp-card thp-card--pay"><b>Браузер заблокировал окно оплаты</b><span>Открой ссылку вручную — оплата пройдёт на защищённой странице ЮKassa.</span>');
-        h.push('<a class="thp-linkbtn" href="' + esc(uiState.popupUrl) + '" target="_blank" rel="noopener noreferrer">Открыть страницу оплаты</a></div>');
+        h.push('<div class="thp-card thp-card--pay"><b>Оплата пока недоступна.</b><span>Приём платежей ещё не настроен на сервере.</span></div>');
       }
     }
 
     h.push('<button class="thp-restore" data-act="restore">Восстановить покупку</button>');
-
-    /* условия — коротко и честно */
     h.push('<div class="thp-terms">');
-    h.push('Оплата — перевод TON на кошелёк проекта: карта не запрашивается, данные карты в Train Hard не попадают. ');
-    h.push('Подписка активируется только после подтверждения перевода в блокчейне TON и действует ' + periodDays() + ' дней без автопродления. ');
-    h.push('Premium и прогресс хранятся на этом устройстве: при очистке данных браузера они не восстановятся — аккаунты и синхронизация появятся в следующей версии.');
+    h.push('Оплата выполняется через Platega по СБП. Данные банковской карты в Train Hard не вводятся и не хранятся. ');
+    h.push('Premium активируется только после подтверждения платежа сервером. Срок — ' + periodDays() + ' дней, без автопродления.');
     h.push('</div>');
 
-    mountEl.innerHTML = h.join('');
+    mountEl.innerHTML = h.join('');    mountEl.innerHTML = h.join('');
 
     /* события */
     mountEl.querySelector('.thp-x').addEventListener('click', function (e) {
@@ -349,9 +349,10 @@
           e.stopPropagation();
           var a = btn.getAttribute('data-act');
           if (a === 'buy') {
-            var res = checkout();
-            if (!res.ok && res.reason === 'popup-blocked') setUiState({ popupUrl: res.url });
-            rerender();
+            checkout().then(function (res) {
+              if (!res || !res.ok) setUiState({ verifyUnavailable: true });
+              rerender();
+            });
           } else if (a === 'restore') {
             doRestore();
           } else if (a === 'copy-addr') {
@@ -405,27 +406,19 @@
   function verifyPending(label) {
     setUiState({ verifying: true, verifyFailed: false, verifyUnavailable: false });
     rerender();
-    if (!Payments.verify) { setUiState({ verifying: false, verifyUnavailable: true }); rerender(); return; }
+    if (!Payments.verify) {
+      setUiState({ verifying: false, verifyUnavailable: true });
+      rerender();
+      return;
+    }
     Payments.verify(label).then(function (ans) {
       setUiState({ verifying: false });
-      var applied = readRecord();
-      if (applied && applied.label === label && applied.until > Date.now()) {
-        /* этот платёж уже применён — повторная обработка невозможна (anti-replay) */
-        rerender(); return;
-      }
       if (ans && ans.ok === true && isFinite(Number(ans.until))) {
-        /* подтверждено доверенной стороной → активация */
-        var rec = activate({ source: 'ton-verify', label: label, track: false });
-        var ts = Number(ans.until);
-        if (ts > rec.until) { /* сервер указал точный срок — доверяем ему */
-          writeRecord({ until: Math.floor(ts), activatedAt: Date.now(), source: 'ton-verify', label: label });
-          pushToReact();
-        }
-        var a = Analytics(); if (a) a.track('purchase_success');
+        activate({ source: 'platega-sbp', label: label, track: true });
+        if (Payments.clearPending) Payments.clearPending();
       } else if (ans && ans.ok === false) {
         setUiState({ verifyFailed: true });
       } else {
-        /* null/сетевая ошибка/мусорный ответ — статус неизвестен, Premium не выдаём */
         setUiState({ verifyUnavailable: true });
       }
       rerender();
