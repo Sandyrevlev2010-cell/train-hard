@@ -1,543 +1,1000 @@
-/* Train Hard — Arena UI v4
- * Group-first Arena:
- * - no group: Create / Join
- * - group: only Active group
- * - opening Arena always opens the current group
- * - one group per user is enforced by backend + DB
- * - invite is a Telegram startapp deep link
- * - owner can delete group and remove members
- */
+/* =========================================================
+ * Train Hard — ARENA UI v3
+ *
+ * Uses existing window.__THAPI from arena-api.js.
+ *
+ * Arena flow:
+ *   no group
+ *      -> Join group
+ *      -> Create group
+ *
+ *   after join/create
+ *      -> Squat / Bench / Deadlift
+ *      -> Group leaderboard
+ *
+ * Telegram:
+ *   startapp -> automatic invitation join
+ *
+ * Rule:
+ *   one user can belong to only one group
+ * ========================================================= */
+
 (function () {
   'use strict';
+
+  var API = window.__THAPI;
+  var cfg = window.TRAINHARD_ARENA || {};
 
   var root = null;
   var state = {
     group: null,
-    me: null,
-    members: [],
-    stats: { squat: null, bench: null, deadlift: null },
+    stats: {
+      squat: null,
+      bench: null,
+      deadlift: null
+    },
     inviteLink: '',
-    loading: false
+    busy: false
   };
+
+  /* =========================================================
+   Telegram
+   ========================================================= */
 
   function tg() {
     try {
-      return window.Telegram && window.Telegram.WebApp
-        ? window.Telegram.WebApp : null;
-    } catch (e) { return null; }
-  }
-
-  function initTelegram() {
-    var app = tg();
-    if (!app) return;
-    try {
-      if (typeof app.ready === 'function') app.ready();
-      if (typeof app.expand === 'function') app.expand();
-      if (typeof app.disableVerticalSwipes === 'function') app.disableVerticalSwipes();
-    } catch (e) {}
+      return window.Telegram &&
+        window.Telegram.WebApp
+        ? window.Telegram.WebApp
+        : null;
+    } catch (e) {
+      return null;
+    }
   }
 
   function startParam() {
-    var app = tg();
     try {
-      return String(app && app.initDataUnsafe && app.initDataUnsafe.start_param || '');
-    } catch (e) { return ''; }
+      if (
+        API &&
+        typeof API.startParam === 'function'
+      ) {
+        return String(API.startParam() || '');
+      }
+    } catch (e) {}
+
+    try {
+      var app = tg();
+
+      return String(
+        app &&
+        app.initDataUnsafe &&
+        app.initDataUnsafe.start_param
+          ? app.initDataUnsafe.start_param
+          : ''
+      );
+    } catch (e) {
+      return '';
+    }
   }
 
-  async function request(method, path, body) {
-    var api = window.__THAPI;
-    if (!api || typeof api.request !== 'function') {
-      var unavailable = new Error('API client unavailable');
-      unavailable.status = 0;
-      throw unavailable;
+  function telegramInit() {
+    var app = tg();
+
+    if (!app) return;
+
+    try {
+      if (typeof app.ready === 'function') {
+        app.ready();
+      }
+
+      if (typeof app.expand === 'function') {
+        app.expand();
+      }
+
+      if (
+        typeof app.disableVerticalSwipes ===
+        'function'
+      ) {
+        app.disableVerticalSwipes();
+      }
+    } catch (e) {
+      console.warn(
+        '[TrainHard Arena] Telegram init:',
+        e
+      );
     }
-    var result = await api.request(method, path, body);
-    if (!result || !result.ok) {
-      var msg = result && result.body && (result.body.error || result.body.message);
-      var err = new Error(msg || (result && result.reason) || ('HTTP ' + ((result && result.status) || 0)));
-      err.status = result && result.status || 0;
-      err.data = result && result.body || null;
-      throw err;
+  }
+
+  /* =========================================================
+   API wrapper
+   ========================================================= */
+
+  async function api(method, path, body) {
+    if (!API || typeof API.request !== 'function') {
+      throw new Error(
+        'Arena API client не найден'
+      );
     }
+
+    var result = await API.request(
+      method,
+      path,
+      body
+    );
+
+    /*
+     * Existing arena-api.js returns:
+     *
+     * {
+     *   ok: true/false,
+     *   status: 200,
+     *   body: {...}
+     * }
+     */
+
+    if (!result || result.ok !== true) {
+      var message = '';
+
+      if (
+        result &&
+        result.body &&
+        typeof result.body === 'object'
+      ) {
+        message =
+          result.body.error ||
+          result.body.message ||
+          '';
+      }
+
+      if (!message && result) {
+        if (result.reason === 'telegram-required') {
+          message =
+            'Открой Train Hard внутри Telegram';
+        } else if (
+          result.reason === 'network'
+        ) {
+          message =
+            'Нет соединения с сервером';
+        } else if (result.status === 401) {
+          message =
+            'Не удалось подтвердить Telegram-аккаунт';
+        } else if (result.status === 403) {
+          message =
+            'Доступ запрещён';
+        } else if (result.status === 404) {
+          message =
+            'Группа или приглашение не найдены';
+        } else if (result.status === 409) {
+          message =
+            'Вы уже состоите в группе';
+        }
+      }
+
+      throw Object.assign(
+        new Error(
+          message ||
+          'Ошибка запроса к серверу'
+        ),
+        {
+          status:
+            result && result.status
+              ? result.status
+              : 0,
+          response: result
+        }
+      );
+    }
+
     return result.body;
   }
 
-  function esc(v) {
-    return String(v == null ? '' : v)
-      .replace(/&/g, '&amp;').replace(/</g, '&lt;')
-      .replace(/>/g, '&gt;').replace(/"/g, '&quot;')
+  /* =========================================================
+   Helpers
+   ========================================================= */
+
+  function esc(value) {
+    return String(
+      value == null ? '' : value
+    )
+      .replace(/&/g, '&amp;')
+      .replace(/</g, '&lt;')
+      .replace(/>/g, '&gt;')
+      .replace(/"/g, '&quot;')
       .replace(/'/g, '&#039;');
   }
 
-  function kg(v) {
-    if (v === null || v === undefined || v === '') return '—';
-    var n = Number(v);
-    if (!Number.isFinite(n)) return '—';
-    return Number.isInteger(n) ? String(n) : String(Math.round(n * 100) / 100);
+  function weight(value) {
+    if (
+      value === null ||
+      value === undefined ||
+      value === ''
+    ) {
+      return '—';
+    }
+
+    var n = Number(value);
+
+    if (!Number.isFinite(n)) {
+      return '—';
+    }
+
+    return Number.isInteger(n)
+      ? String(n)
+      : String(
+          Math.round(n * 100) / 100
+        );
   }
 
-  function total(s) {
-    if (!s || s.squat == null || s.bench == null || s.deadlift == null) return null;
-    return Number(s.squat) + Number(s.bench) + Number(s.deadlift);
+  function total(stats) {
+    if (
+      stats.squat == null ||
+      stats.bench == null ||
+      stats.deadlift == null
+    ) {
+      return null;
+    }
+
+    return (
+      Number(stats.squat) +
+      Number(stats.bench) +
+      Number(stats.deadlift)
+    );
   }
 
-  function normalizeWeight(v) {
-    if (v === '' || v === null || v === undefined) return null;
-    var n = Number(v);
-    if (!Number.isFinite(n) || n < 0 || n > 1000) throw new Error('Вес должен быть от 0 до 1000 кг');
+  function parseWeight(value) {
+    if (
+      value === '' ||
+      value === null ||
+      value === undefined
+    ) {
+      return null;
+    }
+
+    var n = Number(value);
+
+    if (
+      !Number.isFinite(n) ||
+      n < 0 ||
+      n > 1000
+    ) {
+      throw new Error(
+        'Вес должен быть от 0 до 1000 кг'
+      );
+    }
+
     return Math.round(n * 100) / 100;
   }
 
-  function errorMessage(e) {
-    if (!e) return 'Произошла ошибка';
-    if (e.status === 401) return 'Не удалось подтвердить аккаунт Telegram';
-    if (e.status === 403) return e.message || 'Недостаточно прав';
-    if (e.status === 404) return e.message || 'Группа или приглашение не найдены';
-    if (e.status === 409) return e.message || 'Вы уже состоите в группе';
-    return e.message || 'Произошла ошибка';
+  function groupId(group) {
+    if (!group) return '';
+
+    return String(
+      group.id ||
+      group.group_id ||
+      ''
+    );
   }
 
-  function injectStyles() {
-    if (document.getElementById('trainhard-arena-v4-style')) return;
-    var s = document.createElement('style');
-    s.id = 'trainhard-arena-v4-style';
-    s.textContent = `
-      .th-arena-overlay{position:fixed;inset:0;z-index:999999;overflow:auto;background:
-        radial-gradient(circle at 10% 0%,rgba(255,74,54,.22),transparent 32%),
-        radial-gradient(circle at 100% 20%,rgba(255,145,40,.16),transparent 34%),#090909;color:#fff;
-        font-family:-apple-system,BlinkMacSystemFont,"SF Pro Display","Segoe UI",sans-serif}
-      .th-arena{max-width:640px;min-height:100%;margin:auto;padding:calc(16px + env(safe-area-inset-top)) 14px calc(32px + env(safe-area-inset-bottom));box-sizing:border-box}
-      .arena-header{display:flex;align-items:center;justify-content:space-between;margin-bottom:18px}
-      .arena-title{margin:0;font-size:29px;font-weight:950;letter-spacing:-1px}
-      .arena-subtitle{margin:3px 0 0;color:#888;font-size:12px}
-      .arena-back,.arena-icon{width:42px;height:42px;border:0;border-radius:14px;background:rgba(255,255,255,.08);color:#fff;font-size:22px}
-      .arena-hero{position:relative;overflow:hidden;border-radius:25px;padding:25px 21px;margin-bottom:12px;background:linear-gradient(135deg,#3c100b,#a91c11 52%,#ff681a);box-shadow:0 16px 40px rgba(0,0,0,.32)}
-      .arena-hero h2{position:relative;z-index:1;margin:6px 0 0;font-size:30px;line-height:1.04}
-      .arena-hero-label{position:relative;z-index:1;font-size:11px;font-weight:900;letter-spacing:1.4px;opacity:.72;text-transform:uppercase}
-      .arena-card{background:rgba(255,255,255,.065);border:1px solid rgba(255,255,255,.07);border-radius:20px;padding:17px;margin-bottom:11px;backdrop-filter:blur(14px)}
-      .arena-card-title{margin:0 0 12px;font-size:18px;font-weight:950}
-      .arena-muted{color:rgba(255,255,255,.52);font-size:12px;line-height:1.45}
-      .arena-actions{display:grid;gap:10px}
-      .arena-btn{width:100%;min-height:54px;border:0;border-radius:16px;padding:0 16px;color:#fff;background:#1c1c1e;font-size:15px;font-weight:850}
-      .arena-btn-primary{background:linear-gradient(135deg,#e72d1c,#ff721d);box-shadow:0 10px 25px rgba(238,65,28,.22)}
-      .arena-btn-secondary{background:rgba(255,255,255,.09)}
-      .arena-btn-danger{background:rgba(255,50,50,.12);color:#ff958b}
-      .arena-btn-small{min-height:40px;font-size:13px;border-radius:12px}
-      .arena-field{margin-bottom:12px}.arena-label{display:block;margin-bottom:6px;color:#aaa;font-size:12px;font-weight:750}
-      .arena-input{width:100%;height:51px;box-sizing:border-box;border:1px solid rgba(255,255,255,.1);border-radius:14px;background:rgba(0,0,0,.25);color:#fff;padding:0 14px;font-size:16px;outline:none}
-      .arena-input:focus{border-color:#ff633f}
-      .arena-error{display:none;margin:10px 0;padding:11px 13px;border-radius:13px;background:rgba(255,50,50,.12);color:#ff9b92;font-size:13px}
-      .arena-error.show{display:block}
-      .arena-group-name{font-size:26px;font-weight:950;letter-spacing:-.5px}.arena-group-meta{color:#888;font-size:12px;margin-top:3px}
-      .arena-share{display:flex;gap:8px;align-items:center}.arena-share .arena-btn{flex:1}
-      .arena-link{word-break:break-all;margin-top:10px;padding:11px;border-radius:12px;background:rgba(0,0,0,.25);color:#ff9b75;font-size:11px}
-      .arena-power-grid{display:grid;grid-template-columns:repeat(2,1fr);gap:8px}
-      .arena-power{padding:14px;border-radius:15px;background:rgba(255,255,255,.055)}
-      .arena-power-label{font-size:10px;color:#777;font-weight:850;text-transform:uppercase;letter-spacing:.7px}
-      .arena-power-value{margin-top:5px;font-size:24px;font-weight:950}
-      .arena-total{padding:16px;border-radius:17px;background:linear-gradient(135deg,rgba(255,74,54,.17),rgba(255,145,40,.08));margin-bottom:9px}
-      .arena-total-label{font-size:10px;color:#a99;text-transform:uppercase;font-weight:900;letter-spacing:1px}.arena-total-value{margin-top:3px;font-size:36px;font-weight:950}
-      .arena-member{display:grid;grid-template-columns:40px 1fr auto;gap:10px;align-items:center;padding:12px 0;border-bottom:1px solid rgba(255,255,255,.055)}
-      .arena-member:last-child{border-bottom:0}.arena-place{width:36px;height:36px;display:flex;align-items:center;justify-content:center;border-radius:11px;background:rgba(255,255,255,.07);font-weight:950}
-      .arena-member-name{font-size:14px;font-weight:850}.arena-member-sub{margin-top:3px;color:#777;font-size:10px}.arena-member-total{font-size:15px;font-weight:950}
-      .arena-member-actions{margin-top:7px}.arena-empty{color:#777;font-size:13px;padding:8px 0}
-      .arena-role{display:inline-block;margin-left:6px;padding:2px 6px;border-radius:6px;background:rgba(255,105,50,.13);color:#ff9470;font-size:9px;font-weight:900}
-      .arena-loading{opacity:.72;pointer-events:none}
-      @media(max-width:400px){.arena-power-grid{grid-template-columns:1fr}.arena-member{grid-template-columns:36px 1fr}.arena-member-total{grid-column:2}.arena-share{flex-direction:column}.arena-share .arena-btn{width:100%}}
-    `;
-    document.head.appendChild(s);
+  function groupName(group) {
+    if (!group) {
+      return 'Моя группа';
+    }
+
+    return (
+      group.name ||
+      group.title ||
+      'Моя группа'
+    );
   }
 
-
-  function ensureLauncher() {
-    try {
-      var old = document.querySelector('[aria-label="Arena"]');
-      if (old) old.setAttribute('data-th-arena-launcher-hidden', '1');
-      if (document.getElementById('th-arena-launcher')) return;
-      var style = document.createElement('style');
-      style.id = 'trainhard-arena-launcher-style';
-      style.textContent = "\n      .th-arena-launcher{position:fixed;right:14px;bottom:86px;z-index:99990;width:54px;height:54px;border:1px solid rgba(255,105,55,.55);border-radius:18px;background:linear-gradient(145deg,#ff4b22,#b81410);box-shadow:0 10px 30px rgba(0,0,0,.45),0 0 24px rgba(255,70,25,.22);display:flex;align-items:center;justify-content:center;color:#fff;font-size:27px;line-height:1;cursor:pointer;touch-action:manipulation}\n      .th-arena-launcher:active{transform:scale(.94)}\n      [aria-label=\"Arena\"][data-th-arena-launcher-hidden=\"1\"]{display:none!important}\n";
-      document.head.appendChild(style);
-      var btn = document.createElement('button');
-      btn.id = 'th-arena-launcher';
-      btn.className = 'th-arena-launcher';
-      btn.type = 'button';
-      btn.setAttribute('aria-label','Arena');
-      btn.setAttribute('title','Arena');
-      btn.textContent = '🔥';
-      btn.addEventListener('click', function(){ open(); });
-      document.body.appendChild(btn);
-    } catch (e) {}
-  }
-
-  function createRoot() {
-    if (root) return root;
-    root = document.createElement('div');
-    root.className = 'th-arena-overlay';
-    document.body.appendChild(root);
-    document.body.classList.add('thch-open');
-    return root;
-  }
-
-  function destroyRoot() {
-    if (!root) return;
-    root.remove(); root = null;
-    document.body.classList.remove('thch-open');
-  }
-
-  function shell(content, back) {
-    return `
-      <div class="th-arena">
-        <div class="arena-header">
-          ${back ? '<button class="arena-back" data-action="home">‹</button>' : '<div style="width:42px"></div>'}
-          <div style="text-align:center"><h1 class="arena-title">ARENA</h1><p class="arena-subtitle">Train Hard</p></div>
-          <div style="width:42px"></div>
-        </div>
-        ${content}
-      </div>`;
-  }
-
-  function setLoading(v) {
-    state.loading = !!v;
-    if (!root) return;
-    root.classList.toggle('arena-loading', state.loading);
-    root.querySelectorAll('button').forEach(function(b){b.disabled=state.loading;});
+  function userName(row) {
+    return (
+      row.name ||
+      row.first_name ||
+      row.username ||
+      'Участник'
+    );
   }
 
   function showError(message) {
     if (!root) return;
-    var box = root.querySelector('.arena-error');
-    if (!box) return;
-    box.textContent = message || '';
-    box.classList.toggle('show', !!message);
+
+    var boxes =
+      root.querySelectorAll(
+        '.th-arena-error'
+      );
+
+    boxes.forEach(function (box) {
+      box.textContent =
+        message || '';
+
+      box.classList.toggle(
+        'show',
+        Boolean(message)
+      );
+    });
+  }
+
+  function busy(value) {
+    state.busy = Boolean(value);
+
+    if (!root) return;
+
+    root.classList.toggle(
+      'is-loading',
+      state.busy
+    );
+
+    root
+      .querySelectorAll('button')
+      .forEach(function (button) {
+        button.disabled =
+          state.busy;
+      });
+  }
+
+  /* =========================================================
+   Styles
+   ========================================================= */
+
+  function styles() {
+    if (
+      document.getElementById(
+        'trainhard-arena-v3-style'
+      )
+    ) {
+      return;
+    }
+
+    var style =
+      document.createElement('style');
+
+    style.id =
+      'trainhard-arena-v3-style';
+
+    style.textContent = `
+      .th-arena-overlay {
+        position: fixed;
+        inset: 0;
+        z-index: 999999;
+        overflow-y: auto;
+        -webkit-overflow-scrolling: touch;
+
+        background:
+          radial-gradient(
+            circle at 0% 0%,
+            rgba(255,65,35,.20),
+            transparent 34%
+          ),
+          radial-gradient(
+            circle at 100% 20%,
+            rgba(255,145,35,.14),
+            transparent 34%
+          ),
+          #080808;
+
+        color: #fff;
+
+        font-family:
+          -apple-system,
+          BlinkMacSystemFont,
+          "SF Pro Display",
+          "Segoe UI",
+          sans-serif;
+      }
+
+      .th-arena {
+        width: 100%;
+        max-width: 640px;
+        min-height: 100%;
+        margin: 0 auto;
+        padding:
+          calc(18px + env(safe-area-inset-top))
+          16px
+          calc(32px + env(safe-area-inset-bottom));
+        box-sizing: border-box;
+      }
+
+      .th-arena-header {
+        display: grid;
+        grid-template-columns: 42px 1fr 42px;
+        align-items: center;
+        margin-bottom: 20px;
+      }
+
+      .th-arena-title {
+        margin: 0;
+        text-align: center;
+        font-size: 29px;
+        line-height: 1;
+        font-weight: 950;
+        letter-spacing: -1.2px;
+      }
+
+      .th-arena-subtitle {
+        margin: 6px 0 0;
+        text-align: center;
+        color: rgba(255,255,255,.48);
+        font-size: 11px;
+        font-weight: 700;
+      }
+
+      .th-arena-back {
+        width: 42px;
+        height: 42px;
+        border: 0;
+        border-radius: 14px;
+        background: rgba(255,255,255,.08);
+        color: #fff;
+        font-size: 25px;
+        line-height: 42px;
+        cursor: pointer;
+      }
+
+      .th-arena-spacer {
+        width: 42px;
+        height: 42px;
+      }
+
+      .th-arena-hero {
+        position: relative;
+        overflow: hidden;
+        margin-bottom: 14px;
+        padding: 27px 21px;
+        border-radius: 26px;
+
+        background:
+          linear-gradient(
+            135deg,
+            #3d0b08 0%,
+            #a9190e 48%,
+            #ff6b1c 100%
+          );
+
+        box-shadow:
+          0 20px 50px
+          rgba(0,0,0,.35);
+      }
+
+      .th-arena-hero:before {
+        content: "";
+        position: absolute;
+        width: 190px;
+        height: 190px;
+        right: -75px;
+        top: -85px;
+        border-radius: 50%;
+        background:
+          rgba(255,255,255,.10);
+      }
+
+      .th-arena-hero-label {
+        position: relative;
+        z-index: 1;
+        color: rgba(255,255,255,.68);
+        font-size: 10px;
+        font-weight: 900;
+        letter-spacing: 1.7px;
+        text-transform: uppercase;
+      }
+
+      .th-arena-hero h2 {
+        position: relative;
+        z-index: 1;
+        margin: 8px 0 0;
+        font-size: 32px;
+        line-height: 1.02;
+        letter-spacing: -1.4px;
+      }
+
+      .th-arena-card {
+        margin-bottom: 13px;
+        padding: 18px;
+        border: 1px solid
+          rgba(255,255,255,.065);
+        border-radius: 22px;
+        background:
+          rgba(255,255,255,.055);
+        box-sizing: border-box;
+        backdrop-filter: blur(16px);
+        -webkit-backdrop-filter: blur(16px);
+      }
+
+      .th-arena-actions {
+        display: grid;
+        gap: 11px;
+      }
+
+      .th-arena-btn {
+        width: 100%;
+        min-height: 57px;
+        border: 0;
+        border-radius: 17px;
+        padding: 0 17px;
+
+        background: #1b1b1d;
+        color: #fff;
+
+        font-size: 16px;
+        font-weight: 850;
+
+        cursor: pointer;
+        transition:
+          transform .12s ease,
+          opacity .12s ease;
+      }
+
+      .th-arena-btn:active {
+        transform: scale(.985);
+      }
+
+      .th-arena-btn:disabled {
+        opacity: .5;
+      }
+
+      .th-arena-primary {
+        background:
+          linear-gradient(
+            135deg,
+            #e92d1c,
+            #ff741d
+          );
+
+        box-shadow:
+          0 13px 30px
+          rgba(235,58,25,.24);
+      }
+
+      .th-arena-secondary {
+        background:
+          rgba(255,255,255,.085);
+      }
+
+      .th-arena-danger {
+        color: #ff8e85;
+        background:
+          rgba(255,50,50,.10);
+      }
+
+      .th-arena-field {
+        margin-bottom: 14px;
+      }
+
+      .th-arena-label {
+        display: block;
+        margin-bottom: 7px;
+        color: rgba(255,255,255,.60);
+        font-size: 12px;
+        font-weight: 750;
+      }
+
+      .th-arena-input {
+        width: 100%;
+        height: 53px;
+        box-sizing: border-box;
+
+        border: 1px solid
+          rgba(255,255,255,.10);
+        border-radius: 15px;
+
+        outline: none;
+        padding: 0 14px;
+
+        background:
+          rgba(0,0,0,.24);
+        color: #fff;
+
+        font-size: 16px;
+      }
+
+      .th-arena-input:focus {
+        border-color:
+          rgba(255,91,55,.85);
+      }
+
+      .th-arena-error {
+        display: none;
+        margin: 10px 0;
+        padding: 12px 14px;
+
+        border-radius: 14px;
+        background:
+          rgba(255,55,50,.11);
+
+        color: #ff9c94;
+        font-size: 13px;
+        line-height: 1.4;
+      }
+
+      .th-arena-error.show {
+        display: block;
+      }
+
+      .th-arena-info {
+        margin: 13px 2px 0;
+        color: rgba(255,255,255,.46);
+        font-size: 12px;
+        line-height: 1.5;
+      }
+
+      .th-arena-section-title {
+        margin: 0 0 13px;
+        font-size: 17px;
+        font-weight: 900;
+      }
+
+      .th-arena-group-name {
+        margin: 0 0 5px;
+        font-size: 25px;
+        line-height: 1.05;
+        font-weight: 950;
+        letter-spacing: -.7px;
+      }
+
+      .th-arena-group-meta {
+        color: rgba(255,255,255,.45);
+        font-size: 12px;
+      }
+
+      .th-arena-total {
+        display: flex;
+        align-items: flex-end;
+        justify-content: space-between;
+        margin: 17px 0 10px;
+      }
+
+      .th-arena-total-value {
+        font-size: 43px;
+        line-height: .95;
+        font-weight: 950;
+        letter-spacing: -2px;
+      }
+
+      .th-arena-total-unit {
+        margin-bottom: 5px;
+        color: rgba(255,255,255,.42);
+        font-size: 10px;
+        font-weight: 800;
+      }
+
+      .th-arena-stats {
+        display: grid;
+        grid-template-columns:
+          repeat(3, minmax(0,1fr));
+        gap: 8px;
+      }
+
+      .th-arena-stat {
+        padding: 13px 7px;
+        border-radius: 16px;
+        background:
+          rgba(255,255,255,.055);
+        text-align: center;
+      }
+
+      .th-arena-stat-label {
+        color: rgba(255,255,255,.42);
+        font-size: 9px;
+        font-weight: 850;
+        text-transform: uppercase;
+      }
+
+      .th-arena-stat-value {
+        margin-top: 5px;
+        font-size: 18px;
+        font-weight: 950;
+      }
+
+      .th-arena-rank {
+        display: grid;
+        grid-template-columns:
+          42px minmax(0,1fr) auto;
+        gap: 10px;
+        align-items: center;
+
+        padding: 12px 0;
+
+        border-bottom: 1px solid
+          rgba(255,255,255,.055);
+      }
+
+      .th-arena-rank:last-child {
+        border-bottom: 0;
+      }
+
+      .th-arena-place {
+        width: 38px;
+        height: 38px;
+
+        display: flex;
+        align-items: center;
+        justify-content: center;
+
+        border-radius: 13px;
+        background:
+          rgba(255,255,255,.075);
+
+        font-size: 14px;
+        font-weight: 950;
+      }
+
+      .th-arena-rank-name {
+        overflow: hidden;
+        text-overflow: ellipsis;
+        white-space: nowrap;
+
+        font-size: 14px;
+        font-weight: 850;
+      }
+
+      .th-arena-rank-sub {
+        margin-top: 3px;
+        overflow: hidden;
+        text-overflow: ellipsis;
+        white-space: nowrap;
+
+        color: rgba(255,255,255,.40);
+        font-size: 10px;
+      }
+
+      .th-arena-rank-total {
+        font-size: 16px;
+        font-weight: 950;
+      }
+
+      .th-arena-invite {
+        display: none;
+        margin-top: 13px;
+      }
+
+      .th-arena-invite.show {
+        display: block;
+      }
+
+      .th-arena-link {
+        margin-top: 9px;
+        padding: 12px;
+
+        border-radius: 13px;
+        background:
+          rgba(0,0,0,.25);
+
+        color: #ff9b73;
+
+        word-break: break-all;
+
+        font-size: 11px;
+        line-height: 1.45;
+      }
+
+      .is-loading {
+        cursor: wait;
+      }
+
+      @media (max-width: 420px) {
+        .th-arena {
+          padding-left: 12px;
+          padding-right: 12px;
+        }
+
+        .th-arena-hero h2 {
+          font-size: 29px;
+        }
+
+        .th-arena-total-value {
+          font-size: 38px;
+        }
+      }
+    `;
+
+    document.head.appendChild(style);
+  }
+
+  /* =========================================================
+   Root
+   ========================================================= */
+
+  function createRoot() {
+    if (root) return root;
+
+    root =
+      document.createElement('div');
+
+    root.className =
+      'th-arena-overlay';
+
+    document.body.appendChild(root);
+
+    document.body.classList.add(
+      'thch-open'
+    );
+
+    return root;
+  }
+
+  function close() {
+    if (!root) return;
+
+    root.remove();
+    root = null;
+
+    document.body.classList.remove(
+      'thch-open'
+    );
+  }
+
+  function layout(content, back) {
+    return `
+      <div class="th-arena">
+
+        <div class="th-arena-header">
+
+          ${
+            back
+              ? `
+                <button
+                  class="th-arena-back"
+                  data-arena-action="home"
+                  aria-label="Назад">
+                  ‹
+                </button>
+              `
+              : `
+                <div class="th-arena-spacer"></div>
+              `
+          }
+
+          <div>
+            <h1 class="th-arena-title">
+              ARENA
+            </h1>
+
+            <p class="th-arena-subtitle">
+              TRAIN HARD
+            </p>
+          </div>
+
+          <div class="th-arena-spacer"></div>
+
+        </div>
+
+        ${content}
+
+      </div>
+    `;
   }
 
   function bind() {
     if (!root) return;
-    root.querySelectorAll('[data-action]').forEach(function(btn){
-      btn.addEventListener('click', async function(){
-        var a=btn.getAttribute('data-action');
-        if(a==='home') await home();
-        else if(a==='create') createForm();
-        else if(a==='join') joinInfo();
-        else if(a==='save-stats') await saveStats();
-        else if(a==='share') await createInvite();
-        else if(a==='copy') await copyInvite();
-        else if(a==='edit-stats') await editStats();
-        else if(a==='delete-group') await deleteGroup();
-        else if(a==='remove-member') await removeMember(btn.getAttribute('data-user-id'));
+
+    root
+      .querySelectorAll(
+        '[data-arena-action]'
+      )
+      .forEach(function (button) {
+
+        button.addEventListener(
+          'click',
+          async function () {
+
+            if (state.busy) return;
+
+            var action =
+              button.getAttribute(
+                'data-arena-action'
+              );
+
+            if (action === 'home') {
+              await home();
+            }
+
+            if (action === 'join') {
+              joinScreen();
+            }
+
+            if (action === 'create') {
+              createScreen();
+            }
+
+            if (action === 'save-stats') {
+              await saveStats();
+            }
+
+            if (action === 'leaderboard') {
+              await leaderboard();
+            }
+
+            if (action === 'invite') {
+              await createInvite();
+            }
+
+            if (action === 'copy-invite') {
+              await copyInvite();
+            }
+
+            if (action === 'leave') {
+              await leaveGroup();
+            }
+          }
+        );
       });
-    });
   }
 
-  async function getMyGroup() {
-    var data = await request('GET','/api/groups');
-    var groups = data && Array.isArray(data.groups) ? data.groups : Array.isArray(data) ? data : [];
-    return groups.length ? groups[0] : null;
-  }
+  /* =========================================================
+   Home
+   ========================================================= */
 
-  async function loadGroup() {
-    var entry = await getMyGroup();
-    if (!entry) {
-      state.group=null; state.me=null; state.members=[]; return false;
-    }
-    var gid=entry.id || (entry.group && entry.group.id);
-    var detail=await request('GET','/api/groups/'+encodeURIComponent(gid));
-    state.group=detail.group || entry.group || entry;
-    state.me=detail.me || {role:entry.role || 'MEMBER'};
-    var members=await request('GET','/api/groups/'+encodeURIComponent(gid)+'/members');
-    state.members=members && Array.isArray(members.members) ? members.members : [];
-    var stats=await request('GET','/api/arena/stats');
-    state.stats=(stats && stats.stats) || {squat:null,bench:null,deadlift:null};
-    return true;
-  }
+  async function home(error) {
+    if (!root) createRoot();
 
-  function memberName(m) {
-    var u=m.user || m;
-    return u.first_name || u.username || u.last_name || 'Участник';
-  }
+    root.innerHTML =
+      layout(`
+        <div class="th-arena-hero">
 
-  function memberRole(m) {
-    return String(m.role || '').toUpperCase();
-  }
-
-  function memberTotal(m) {
-    if (m.squat != null && m.bench != null && m.deadlift != null) {
-      return Number(m.squat)+Number(m.bench)+Number(m.deadlift);
-    }
-    if (m.stats) return total(m.stats);
-    return null;
-  }
-
-  function renderMembers() {
-    if (!state.members.length) return '<div class="arena-empty">В группе пока нет участников.</div>';
-    var rows=state.members.slice();
-    rows.sort(function(a,b){
-      var at=memberTotal(a), bt=memberTotal(b);
-      if(at==null && bt==null) return 0;
-      if(at==null) return 1;
-      if(bt==null) return -1;
-      return bt-at;
-    });
-    return rows.map(function(m,i){
-      var u=m.user || {};
-      var role=memberRole(m);
-      var mine=state.me && String(m.user_id)===String(state.me.user_id || (window.__THAPI.user&&window.__THAPI.user().id));
-      var canRemove=state.me && String(state.me.role).toUpperCase()==='OWNER' && !mine && role!=='OWNER';
-      var t=memberTotal(m);
-      return `
-        <div class="arena-member">
-          <div class="arena-place">${i+1}</div>
-          <div>
-            <div class="arena-member-name">${esc(memberName(m))}${role==='OWNER'?'<span class="arena-role">ВЛАДЕЛЕЦ</span>':''}</div>
-            <div class="arena-member-sub">Жим ${kg(m.bench)} · Присед ${kg(m.squat)} · Становая ${kg(m.deadlift)}</div>
-            ${canRemove ? '<div class="arena-member-actions"><button class="arena-btn arena-btn-danger arena-btn-small" data-action="remove-member" data-user-id="'+esc(m.user_id)+'">Удалить участника</button></div>' : ''}
+          <div class="th-arena-hero-label">
+            POWER • COMPETE • IMPROVE
           </div>
-          <div class="arena-member-total">${t==null?'—':kg(t)+' кг'}</div>
-        </div>`;
-    }).join('');
-  }
 
-  function renderGroup() {
-    var g=state.group||{};
-    var s=state.stats||{};
-    var mineRole=String(state.me&&state.me.role||'MEMBER').toUpperCase();
-    var owner=mineRole==='OWNER';
-    var inviteBlock=state.inviteLink ? `
-      <div class="arena-link" id="arena-invite-link">${esc(state.inviteLink)}</div>
-      <button class="arena-btn arena-btn-secondary" data-action="copy" style="margin-top:8px">Скопировать ссылку</button>
-    ` : '';
-    root.innerHTML=shell(`
-      <div class="arena-card">
-        <div class="arena-group-name">${esc(g.name||'Моя группа')}</div>
-        <div class="arena-group-meta">${state.members.length} участник(ов) · ${owner?'Вы владелец':'Участник'}</div>
-        <div style="margin-top:14px" class="arena-share">
-          <button class="arena-btn arena-btn-primary" data-action="share">🔗 Поделиться ссылкой</button>
+          <h2>
+            Твоя силовая<br>
+            арена
+          </h2>
+
         </div>
-        ${inviteBlock}
-      </div>
 
-      <div class="arena-card">
-        <h2 class="arena-card-title">Троеборье</h2>
-        <div class="arena-total"><div class="arena-total-label">Сумма</div><div class="arena-total-value">${total(s)==null?'—':kg(total(s))+' кг'}</div></div>
-        <div class="arena-power-grid">
-          <div class="arena-power"><div class="arena-power-label">Жим</div><div class="arena-power-value">${kg(s.bench)} кг</div></div>
-          <div class="arena-power"><div class="arena-power-label">Присед</div><div class="arena-power-value">${kg(s.squat)} кг</div></div>
-          <div class="arena-power"><div class="arena-power-label">Становая</div><div class="arena-power-value">${kg(s.deadlift)} кг</div></div>
+        <div class="th-arena-card">
+
+          <div class="th-arena-actions">
+
+            <button
+              class="
+                th-arena-btn
+                th-arena-primary
+              "
+              data-arena-action="join">
+              ⚡ Вступить в группу
+            </button>
+
+            <button
+              class="
+                th-arena-btn
+                th-arena-secondary
+              "
+              data-arena-action="create">
+              ＋ Создать группу
+            </button>
+
+          </div>
+
+          <div
+            class="th-arena-error
+              ${error ? 'show' : ''}">
+            ${esc(error || '')}
+          </div>
+
+          <p class="th-arena-info">
+            В Arena можно состоять только
+            в одной группе. После вступления
+            или создания группы ты укажешь
+            свои силовые показатели.
+          </p>
+
         </div>
-      </div>
+      `);
 
-      <div class="arena-card">
-        <h2 class="arena-card-title">Участники</h2>
-        ${renderMembers()}
-      </div>
-
-      <div class="arena-card">
-        <h2 class="arena-card-title">Мои последние результаты</h2>
-        <div class="arena-power-grid">
-          <div class="arena-power"><div class="arena-power-label">Жим</div><div class="arena-power-value">${kg(s.bench)} кг</div></div>
-          <div class="arena-power"><div class="arena-power-label">Присед</div><div class="arena-power-value">${kg(s.squat)} кг</div></div>
-          <div class="arena-power"><div class="arena-power-label">Становая</div><div class="arena-power-value">${kg(s.deadlift)} кг</div></div>
-        </div>
-        <button class="arena-btn arena-btn-secondary" data-action="edit-stats" style="margin-top:10px">Изменить результаты</button>
-      </div>
-
-      ${owner ? `
-        <div class="arena-card">
-          <h2 class="arena-card-title">Управление группой</h2>
-          <p class="arena-muted">Только владелец может удалять участников и группу.</p>
-          <button class="arena-btn arena-btn-danger" data-action="delete-group">Удалить группу</button>
-        </div>
-      ` : ''}
-      <div class="arena-error"></div>
-    `);
     bind();
   }
 
-  async function showGroup() {
-    if (!root) createRoot();
-    setLoading(true);
-    try {
-      if (!(await loadGroup())) return home();
-      renderGroup();
-    } catch(e) {
-      await home(errorMessage(e));
-    } finally { setLoading(false); }
-  }
+  /* =========================================================
+   Join screen
+   ========================================================= */
 
-  function home(error) {
-    if (!root) createRoot();
-    if (state.group) return showGroup();
-    root.innerHTML=shell(`
-      <div class="arena-hero"><div class="arena-hero-label">POWER · COMPETE · IMPROVE</div><h2>Твоя силовая арена</h2></div>
-      <div class="arena-card">
-        <div class="arena-actions">
-          <button class="arena-btn arena-btn-primary" data-action="join">⚡ Вступить в группу</button>
-          <button class="arena-btn arena-btn-secondary" data-action="create">＋ Создать группу</button>
-        </div>
-        <div class="arena-error ${error?'show':''}">${esc(error||'')}</div>
-        <p class="arena-muted" style="margin:12px 2px 0">После вступления или создания группы здесь останется только кнопка «Действующая группа».</p>
-      </div>
-    `);
-    bind();
-  }
+  function joinScreen() {
+    if (!root) return;
 
-  function createForm() {
-    root.innerHTML=shell(`
-      <div class="arena-card">
-        <h2 class="arena-card-title">Создать группу</h2>
-        <div class="arena-field"><label class="arena-label">Название группы</label><input id="arena-group-name" class="arena-input" maxlength="80" placeholder="Например: Train Hard Team"></div>
-        <div class="arena-error"></div>
-        <button class="arena-btn arena-btn-primary" id="arena-create-submit">Создать группу</button>
-      </div>`,true);
-    bind();
-    root.querySelector('#arena-create-submit').addEventListener('click',async function(){
-      var name=String(root.querySelector('#arena-group-name').value||'').trim();
-      if(name.length<3){showError('Название — от 3 до 80 символов');return;}
-      setLoading(true);
-      try{
-        var data=await request('POST','/api/groups',{name:name});
-        state.group=data.group||data;
-        await statsForm('Группа создана');
-      }catch(e){showError(errorMessage(e));}finally{setLoading(false);}
-    });
-  }
+    root.innerHTML =
+      layout(`
+        <div class="th-arena-card">
 
-  function joinInfo() {
-    root.innerHTML=shell(`
-      <div class="arena-card">
-        <h2 class="arena-card-title">Вступить в группу</h2>
-        <p class="arena-muted">Приглашение приходит ссылкой Telegram. Открой ссылку — Arena автоматически добавит тебя в группу.</p>
-        <div class="arena-error"></div>
-        <button class="arena-btn arena-btn-secondary" data-action="home">Назад</button>
-      </div>`,true);
-    bind();
-    var token=startParam();
-    if(token) autoJoin(token);
-  }
-
-  async function autoJoin(token) {
-    setLoading(true);
-    try{
-      var data=await request('POST','/api/invites/'+encodeURIComponent(token)+'/join',{});
-      state.group=data.group||data;
-      await loadGroup();
-      renderGroup();
-    }catch(e){await home(errorMessage(e));}
-    finally{setLoading(false);}
-  }
-
-  function statsForm(title) {
-    root.innerHTML=shell(`
-      <div class="arena-hero"><div class="arena-hero-label">${esc(title||'Результаты')}</div><h2>Твоё<br>троеборье</h2></div>
-      <div class="arena-card">
-        <div class="arena-field"><label class="arena-label">Жим — кг</label><input id="arena-bench" class="arena-input" type="number" min="0" max="1000" step="0.01" inputmode="decimal" placeholder="100"></div>
-        <div class="arena-field"><label class="arena-label">Присед — кг</label><input id="arena-squat" class="arena-input" type="number" min="0" max="1000" step="0.01" inputmode="decimal" placeholder="140"></div>
-        <div class="arena-field"><label class="arena-label">Становая — кг</label><input id="arena-deadlift" class="arena-input" type="number" min="0" max="1000" step="0.01" inputmode="decimal" placeholder="180"></div>
-        <div class="arena-error"></div>
-        <button class="arena-btn arena-btn-primary" data-action="save-stats">Сохранить результаты</button>
-      </div>`,true);
-    bind();
-    if(state.stats){
-      root.querySelector('#arena-bench').value=state.stats.bench==null?'':state.stats.bench;
-      root.querySelector('#arena-squat').value=state.stats.squat==null?'':state.stats.squat;
-      root.querySelector('#arena-deadlift').value=state.stats.deadlift==null?'':state.stats.deadlift;
-    }
-  }
-
-  async function saveStats() {
-    setLoading(true);
-    try{
-      var stats={
-        bench:normalizeWeight(root.querySelector('#arena-bench').value),
-        squat:normalizeWeight(root.querySelector('#arena-squat').value),
-        deadlift:normalizeWeight(root.querySelector('#arena-deadlift').value)
-      };
-      await request('PUT','/api/arena/stats',stats);
-      state.stats=stats;
-      await showGroup();
-    }catch(e){showError(errorMessage(e));}
-    finally{setLoading(false);}
-  }
-
-  async function editStats() {
-    statsForm('Обновление результатов');
-  }
-
-  async function createInvite() {
-    if(!state.group) return;
-    setLoading(true);
-    try{
-      var gid=state.group.id;
-      var data=await request('POST','/api/groups/'+encodeURIComponent(gid)+'/invite',{});
-      var token=data && (data.code || data.token || (data.invite && (data.invite.code||data.invite.token)));
-      if(!token) throw new Error('Сервер не вернул код приглашения');
-      state.inviteLink='https://t.me/trainhard_power_bot/trainhard?startapp='+encodeURIComponent(token);
-      renderGroup();
-    }catch(e){showError(errorMessage(e));}
-    finally{setLoading(false);}
-  }
-
-  async function copyInvite() {
-    if(!state.inviteLink) return;
-    try{
-      if(navigator.clipboard && navigator.clipboard.writeText) await navigator.clipboard.writeText(state.inviteLink);
-      else{
-        var t=document.createElement('textarea');t.value=state.inviteLink;t.style.position='fixed';document.body.appendChild(t);t.select();document.execCommand('copy');t.remove();
-      }
-      var b=root.querySelector('[data-action="copy"]');
-      if(b){b.textContent='✓ Ссылка скопирована';setTimeout(function(){if(b)b.textContent='Скопировать ссылку';},1600);}
-    }catch(e){showError('Не удалось скопировать ссылку');}
-  }
-
-  async function removeMember(userId) {
-    if(!state.group || !userId) return;
-    if(!window.confirm('Удалить этого участника из группы?')) return;
-    setLoading(true);
-    try{
-      await request('DELETE','/api/groups/'+encodeURIComponent(state.group.id)+'/members/'+encodeURIComponent(userId),{});
-      await showGroup();
-    }catch(e){showError(errorMessage(e));}
-    finally{setLoading(false);}
-  }
-
-  async function deleteGroup() {
-    if(!state.group) return;
-    if(!window.confirm('Удалить группу и всех её участников? Это действие нельзя отменить.')) return;
-    setLoading(true);
-    try{
-      await request('DELETE','/api/groups/'+encodeURIComponent(state.group.id),{});
-      state.group=null;state.me=null;state.members=[];state.inviteLink='';
-      await home();
-    }catch(e){showError(errorMessage(e));}
-    finally{setLoading(false);}
-  }
-
-  async function open() {
-    ensureLauncher();
-    var launcher = document.getElementById('th-arena-launcher');
-    if (launcher) launcher.style.display = 'none';
-    injectStyles(); initTelegram();
-    if(!root) createRoot();
-    setLoading(true);
-    try{
-      var group=await getMyGroup();
-      if(group){
-        state.group=group.group||group;
-        await showGroup();
-        return;
-      }
-      var token=startParam();
-      if(token){await autoJoin(token);return;}
-      state.group=null;
-      await home();
-    }catch(e){await home(errorMessage(e));}
-    finally{setLoading(false);}
-  }
-
-  function close(){destroyRoot(); ensureLauncher(); var launcher=document.getElementById('th-arena-launcher'); if(launcher) launcher.style.display='flex';}
-
-  try { ensureLauncher(); } catch (e) {}
-  window.__THArena={open:open,close:close,refresh:open};
-  window.TrainHardArena=window.__THArena;
-})();
+          <h2 class="th-arena-section-title">
+            Вступить в группу
