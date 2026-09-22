@@ -537,7 +537,7 @@
 
   function close(){destroyRoot(); ensureLauncher(); var launcher=document.getElementById('th-arena-launcher'); if(launcher) launcher.style.display='flex';}
 
-  try { document.addEventListener('DOMContentLoaded', ensureLauncher); } catch (e) {}
+  try { ensureLauncher(); } catch (e) {}
   window.__THArena={open:open,close:close,refresh:open};
   window.TrainHardArena=window.__THArena;
 })();
