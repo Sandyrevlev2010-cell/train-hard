@@ -488,6 +488,27 @@
     mount: mount
   };
 
+  /* Серверное entitlement — источник истины для Platega Premium. */
+  try {
+    if (Payments && Payments.sync) {
+      Payments.sync().then(function (server) {
+        if (!server || !server.ok) return;
+        if (server.until > Date.now()) {
+          writeRecord({
+            until: Math.floor(server.until),
+            activatedAt: Date.now(),
+            source: 'platega-sbp',
+            label: 'server-sync'
+          });
+          pushToReact();
+        } else {
+          writeRecord(null);
+          pushToReact();
+        }
+      });
+    }
+  } catch (e) {}
+
   /* Применяем entitlement к состоянию при старте (до рендера React-экранов) */
   pushToReact();
   handleReturn();
