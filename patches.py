@@ -305,7 +305,6 @@ def patch_bundle(src):
 
     src = replace_once(
         src,
-        "e.indexOf(`trainhard_react_`)===0&&localStorage.removeItem(e)",
         "e.indexOf(`trainhard_react_`)===0||e===`trainhard_v1_challenges`||e===`trainhard_analytics_v1`"
         "||e===`trainhard_interval_timer_v1`||e===`trainhard_premium_pending_v1`"
         "?localStorage.removeItem(e):void 0",
@@ -357,6 +356,11 @@ def patch_bundle(src):
     src = replace_once(src, "children:n.name||n.login}", "children:n.name||`Спортсмен`}", 'P20 chip-name')
 
     # --- P21: аналитика — завершение тренировки ---
+    src = replace_once(
+        src,
+        "completeWorkout:M,",
+        "completeWorkout:(...thA)=>{try{window.__THAnalytics&&window.__THAnalytics.track(`workout_complete`)}catch{}return M(...thA)},",
+        'P21 analytics-complete')
     src = replace_once(
         src,
         "completeWorkout:M,",
