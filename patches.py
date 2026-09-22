@@ -305,11 +305,6 @@ def patch_bundle(src):
 
     src = replace_once(
         src,
-        "e.indexOf(`trainhard_react_`)===0||e===`trainhard_v1_challenges`||e===`trainhard_analytics_v1`"
-        "||e===`trainhard_interval_timer_v1`||e===`trainhard_premium_pending_v1`"
-        "?localStorage.removeItem(e):void 0",
-        'P24 reset-clears-challenges')
-
     # --- P25: серия сбрасывается после 2 дней без тренировок (правило как у ge()
     #     в бандле), уже при загрузке профиля + флаг для уведомления ---
     src = replace_once(
