@@ -12,7 +12,7 @@
  *    закрытия свайпом при скролле тренировок;
  *  • BackButton Telegram закрывает открытый интервальный таймер;
  *  • HapticFeedback на достижениях и завершении челленджов;
- *  • deep-link: start_param с payload челленджа → превью;
+ *  • start_param используется для Telegram deep-link Arena;
  *  • window.open внешних http(s) ссылок → через openLink Telegram;
  *  • изоляция данных аккаунта (см. telegram-boot.js).
  *
@@ -53,7 +53,7 @@
     document.head.appendChild(st);
   } catch (e) {}
 
-  /* ---------- HapticFeedback: достижения/челленджи ---------- */
+  /* ---------- HapticFeedback: достижения ---------- */
   function haptic(kind) {
     try {
       var h = app.HapticFeedback;
