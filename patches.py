@@ -265,8 +265,21 @@ def patch_bundle(src):
     # --- P15: карточка «Рейтинг · Арена» -> Premium CTA (сначала: внутри неё thArenaOpen) ---
     src = replace_call(src, 'Рейтинг · Арена', '(0,N.jsxs)(`button`', len(JSXS), PREMIUM_CTA, 'P15 premium-cta')
 
-    # --- P14: плавающая кнопка Arena на главном экране удалена ---
-    src = remove_call(src, 'thArenaOpen', '(0,N.jsxs)(`button`', len(JSXS), 'P14 arena-fab')
+    # --- P14: возвращаем заметную кнопку Arena на главном экране ---
+    ARENA_CTA = (
+        "(0,N.jsx)(`button`,{onClick:()=>{try{window.__THArena&&window.__THArena.open()}catch(e){}},"
+        "className:`mx-4 mt-3 w-[calc(100%-2rem)] rounded-3xl p-4 ring-1 ring-red-500/30 "
+        "bg-gradient-to-r from-red-600 via-red-500 to-orange-500 hover:brightness-110 transition "
+        "shrink-0 flex items-center gap-3 text-left cursor-pointer`,"
+        "children:[(0,N.jsx)(`span`,{className:`w-11 h-11 rounded-2xl bg-black/20 "
+        "flex items-center justify-center text-xl shrink-0`,children:`⚔️`}),"
+        "(0,N.jsxs)(`span`,{className:`flex-1 min-w-0`,children:["
+        "(0,N.jsx)(`span`,{className:`block text-[10px] font-black uppercase tracking-[0.15em] text-white/70`,children:`Train Hard`}),"
+        "(0,N.jsx)(`span`,{className:`block text-base font-black`,children:`Арена`}),"
+        "(0,N.jsx)(`span`,{className:`block text-[10px] text-white/70`,children:`Группы · троеборье · рейтинг`})"
+        "]}),(0,N.jsx)(`span`,{className:`text-2xl font-black shrink-0`,children:`→`})]})"
+    )
+    src = replace_call(src, 'thArenaOpen', '(0,N.jsxs)(`button`', len(JSXS), ARENA_CTA, 'P14 arena-cta')
 
     # --- P16: меню — интервальный таймер + честный футер ---
     src = replace_once(
