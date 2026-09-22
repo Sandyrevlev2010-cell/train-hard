@@ -274,8 +274,7 @@ def patch_bundle(src):
         "{t:`AI-тренер`,fn:()=>h(!0)}",
         "{t:`AI-тренер`,fn:()=>h(!0)},{t:`Интервальный таймер`,"
         "fn:()=>{try{window.__THTimer&&window.__THTimer.open()}catch(e){}}},"
-        "{t:`Челленджи`,fn:()=>{try{window.__THChallenges&&window.__THChallenges.open()}catch(e){}}}",
-        'P16a drawer-interval+challenges')
+        'P16a drawer-interval')
     src = replace_once(src, "Train Hard v2 · React · демо", "Train Hard · MVP 1.0", 'P16b drawer-footer')
 
     # --- P17: профиль — без аккаунтов и сервера ---
@@ -305,7 +304,6 @@ def patch_bundle(src):
     # P17e: кнопка «Выйти из аккаунта»
     src = remove_call(src, 'children:`Выйти из аккаунта`}', '(0,N.jsx)(`button`', len(JSX), 'P17e remove-logout')
 
-    # --- P24: сброс данных очищает челленджи/настройки (entitlement остаётся) ---
     src = replace_once(
         src,
         "e.indexOf(`trainhard_react_`)===0&&localStorage.removeItem(e)",
