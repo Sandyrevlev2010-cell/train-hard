@@ -1,73 +1,184 @@
-/* §40/платежи: серверная верификация TON через toncenter (мок), анти-повтор по label. */
+/* Platega / СБП payment flow: create, status verification, callback, replay protection. */
 'use strict';
 const { test } = require('node:test');
 const assert = require('node:assert');
 const { makeServer } = require('./helpers');
 
-function tonMock(txs) {
-  let calls = 0;
+function plategaMock() {
+  const calls = [];
+  const tx = {
+    id: 'tx-test-001',
+    status: 'PENDING',
+    payload: '',
+    paymentDetails: { amount: 299, currency: 'RUB' }
+  };
+
   return {
-    address: 'UQWALLET', amountNano: 1000000000, periodDays: 30,
-    fetch: async () => { calls++; return { json: async () => ({ ok: true, result: txs }) }; },
-    get calls() { return calls; }
+    merchantId: 'merchant-test',
+    secret: 'secret-test',
+    amountRub: 299,
+    periodDays: 30,
+    apiBase: 'https://app.platega.test',
+    calls,
+    tx,
+    fetch: async (url, opts) => {
+      calls.push({ url, opts });
+      if (url.endsWith('/transaction/process')) {
+        tx.payload = JSON.parse(opts.body).payload;
+        return {
+          ok: true,
+          status: 200,
+          json: async () => ({
+            transactionId: tx.id,
+            redirect: 'https://pay.platega.io/?id=test',
+            status: 'PENDING',
+            expiresIn: '00:15:00'
+          })
+        };
+      }
+      if (url.endsWith('/transaction/' + tx.id)) {
+        return { ok: true, status: 200, json: async () => ({ ...tx }) };
+      }
+      throw new Error('unexpected URL');
+    }
   };
 }
 
-test('payments: найдена входящая транзакция с label и суммой → ok, выдан until', async () => {
-  const ton = tonMock([{ in: true, value: '1000000000', message: 'th-abc123' }]);
-  const env = makeServer({ ton });
-  const { token } = await env.login({ id: 1 });
+test('payments: create returns Platega SBP redirect and transaction id', async () => {
+  const platega = plategaMock();
+  const env = makeServer({ platega });
+  const { token } = await env.login({ id: 1, username: 'test' });
 
-  const r = await env.call('POST', '/payments/verify', { token, body: { label: 'th-abc123' } });
-  assert.equal(r.code, 200);
+  const r = await env.call('POST', '/payments/create', {
+    token,
+    body: { client_label: 'th-test1234' }
+  });
+
+  assert.equal(r.code, 201);
   assert.equal(r.body.ok, true);
-  const until = r.body.until;
-  assert.ok(until > Date.now() && until <= Date.now() + 31 * 86400000);
-
-  const p = await env.call('GET', '/premium', { token });
-  assert.equal(p.body.premium_until, until);
+  assert.equal(r.body.payment_id, 'tx-test-001');
+  assert.match(r.body.url, /^https:\/\/pay\.platega\.io\//);
+  assert.equal(platega.calls.length, 1);
 });
 
-test('payments: недостаточная сумма / чужой label / исходящая → ok:false', async () => {
-  const ton = tonMock([
-    { in: true, value: '500000000', message: 'th-low' },
-    { in: true, value: '1000000000', message: 'th-other' },  /* label th-none в моке отсутствует */
-    { in: false, value: '1000000000', message: 'th-out' }
-  ]);
-  const env = makeServer({ ton });
+test('payments: pending does not activate Premium, confirmed status does', async () => {
+  const platega = plategaMock();
+  const env = makeServer({ platega });
   const { token } = await env.login({ id: 1 });
-  for (const label of ['th-low', 'th-none', 'th-out']) {
-    const r = await env.call('POST', '/payments/verify', { token, body: { label } });
-    assert.equal(r.body.ok, false);
-  }
-  assert.equal((await env.call('GET', '/premium', { token })).body.premium_until, null);
+
+  await env.call('POST', '/payments/create', {
+    token,
+    body: { client_label: 'th-test1234' }
+  });
+
+  const pending = await env.call('POST', '/payments/verify', {
+    token,
+    body: { payment_id: platega.tx.id }
+  });
+  assert.equal(pending.code, 200);
+  assert.equal(pending.body.ok, false);
+
+  platega.tx.status = 'CONFIRMED';
+
+  const confirmed = await env.call('POST', '/payments/verify', {
+    token,
+    body: { payment_id: platega.tx.id }
+  });
+  assert.equal(confirmed.code, 200);
+  assert.equal(confirmed.body.ok, true);
+  assert.ok(confirmed.body.until > Date.now());
+
+  const premium = await env.call('GET', '/premium', { token });
+  assert.equal(premium.body.premium_until, confirmed.body.until);
 });
 
-test('payments: повторная верификация того же label не продлевает и не дёргает API', async () => {
-  const ton = tonMock([{ in: true, value: '1000000000', message: 'th-once' }]);
-  const env = makeServer({ ton });
-  const { token } = await env.login({ id: 1 });
-  const a = await env.call('POST', '/payments/verify', { token, body: { label: 'th-once' } });
-  const b = await env.call('POST', '/payments/verify', { token, body: { label: 'th-once' } });
-  assert.equal(a.body.until, b.body.until);      /* анти-повтор: тот же until */
-  assert.equal(ton.calls, 1);
+test('payments: transaction cannot be claimed by another user', async () => {
+  const platega = plategaMock();
+  const env = makeServer({ platega });
+  const a = await env.login({ id: 1 });
+  const b = await env.login({ id: 2 });
+
+  await env.call('POST', '/payments/create', {
+    token: a.token,
+    body: { client_label: 'th-user-a' }
+  });
+
+  platega.tx.status = 'CONFIRMED';
+
+  const r = await env.call('POST', '/payments/verify', {
+    token: b.token,
+    body: { payment_id: platega.tx.id }
+  });
+
+  assert.equal(r.code, 403);
+  assert.equal((await env.call('GET', '/premium', { token: b.token })).body.premium_until, null);
 });
 
-test('payments: невалидный label → 400; платежи не настроены → 503', async () => {
-  const env = makeServer({ ton: { address: 'UQWALLET', amountNano: 1e9, periodDays: 30, fetch: async () => ({ json: async () => ({ result: [] }) }) } });
+test('payments: confirmed transaction is idempotent', async () => {
+  const platega = plategaMock();
+  const env = makeServer({ platega });
   const { token } = await env.login({ id: 1 });
-  assert.equal((await env.call('POST', '/payments/verify', { token, body: { label: 'плохо!' } })).code, 400);
 
-  const off = makeServer({ ton: { address: '', amountNano: 0, fetch: null } });
-  const u = await off.login({ id: 1 });
-  assert.equal((await off.call('POST', '/payments/verify', { token: u.token, body: { label: 'th-x' } })).code, 503);
+  await env.call('POST', '/payments/create', {
+    token,
+    body: { client_label: 'th-test1234' }
+  });
+  platega.tx.status = 'CONFIRMED';
+
+  const a = await env.call('POST', '/payments/verify', {
+    token,
+    body: { payment_id: platega.tx.id }
+  });
+  const b = await env.call('POST', '/payments/verify', {
+    token,
+    body: { payment_id: platega.tx.id }
+  });
+
+  assert.equal(a.body.until, b.body.until);
+  assert.equal(platega.calls.filter(x => x.url.includes('/transaction/')).length, 1);
 });
 
-test('payments: blockchain API недоступен → 502, entitlement не меняется', async () => {
-  const ton = { address: 'UQW', amountNano: 1e9, periodDays: 30, fetch: async () => { throw new Error('down'); } };
-  const env = makeServer({ ton });
+test('payments: Platega callback authenticates and activates entitlement', async () => {
+  const platega = plategaMock();
+  const env = makeServer({ platega });
   const { token } = await env.login({ id: 1 });
-  const r = await env.call('POST', '/payments/verify', { token, body: { label: 'th-down' } });
-  assert.equal(r.code, 502);
-  assert.equal((await env.call('GET', '/premium', { token })).body.premium_until, null);
+
+  await env.call('POST', '/payments/create', {
+    token,
+    body: { client_label: 'th-test1234' }
+  });
+
+  const cb = await env.call('POST', '/payments/platega/callback', {
+    body: {
+      id: platega.tx.id,
+      amount: 299,
+      currency: 'RUB',
+      status: 'CONFIRMED',
+      payload: platega.tx.payload,
+      paymentMethod: 2
+    },
+    headers: {
+      'x-merchantid': 'merchant-test',
+      'x-secret': 'secret-test'
+    }
+  });
+
+  assert.equal(cb.code, 200);
+  const premium = await env.call('GET', '/premium', { token });
+  assert.ok(premium.body.premium_until > Date.now());
+});
+
+test('payments: invalid callback secret is rejected', async () => {
+  const platega = plategaMock();
+  const env = makeServer({ platega });
+
+  const cb = await env.call('POST', '/payments/platega/callback', {
+    body: { status: 'CONFIRMED', id: 'tx-test-001', amount: 299 },
+    headers: {
+      'x-merchantid': 'wrong',
+      'x-secret': 'wrong'
+    }
+  });
+
+  assert.equal(cb.code, 401);
 });
