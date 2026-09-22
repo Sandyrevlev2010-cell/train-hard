@@ -1213,6 +1213,46 @@ function createApp(opts) {
   );
 
   on(
+    'DELETE',
+    /^\/groups\/([^/]+)\/members\/([^/]+)$/,
+    async (c) => {
+      const r = await requireMember(c.m[1], c.user);
+      if (r.code) return r;
+
+      if (r.member.role !== 'OWNER') {
+        return {
+          code: 403,
+          body: { error: 'owner only' }
+        };
+      }
+
+      const targetUserId = c.m[2];
+      const target = await store.getMember(c.m[1], targetUserId);
+
+      if (!target) {
+        return {
+          code: 404,
+          body: { error: 'member not found' }
+        };
+      }
+
+      if (target.role === 'OWNER' || targetUserId === c.user.id) {
+        return {
+          code: 400,
+          body: { error: 'owner cannot be removed' }
+        };
+      }
+
+      await store.removeMember(c.m[1], targetUserId);
+
+      return {
+        code: 200,
+        body: { ok: true }
+      };
+    }
+  );
+
+  on(
     'POST',
     /^\/groups\/([^/]+)\/leave$/,
     async (c) => {
