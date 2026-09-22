@@ -272,8 +272,7 @@ def patch_bundle(src):
     src = replace_once(
         src,
         "{t:`AI-тренер`,fn:()=>h(!0)}",
-        "{t:`AI-тренер`,fn:()=>h(!0)},{t:`Интервальный таймер`,"
-        "fn:()=>{try{window.__THTimer&&window.__THTimer.open()}catch(e){}}},"
+        "{t:`AI-тренер`,fn:()=>h(!0)},{t:`Интервальный таймер`,fn:()=>{try{window.__THTimer&&window.__THTimer.open()}catch(e){}}}",
         'P16a drawer-interval')
     src = replace_once(src, "Train Hard v2 · React · демо", "Train Hard · MVP 1.0", 'P16b drawer-footer')
 
