@@ -156,6 +156,7 @@ async function listMemberStats(store, gid) {
   if (store.p && typeof store.p.query === 'function') {
     const r = await store.p.query(
       `SELECT gm.user_id,
+              gm.role,
               u.id,
               u.telegram_id,
               u.username,
@@ -182,6 +183,7 @@ async function listMemberStats(store, gid) {
     const s = await readStats(store, m.user_id);
     rows.push({
       user_id: m.user_id,
+      role: m.role || 'MEMBER',
       id: u.id,
       telegram_id: u.telegram_id,
       username: u.username,
@@ -325,9 +327,22 @@ function createArenaHandler(app, store, options = {}) {
         const rows = await listMemberStats(store, gid);
         const boards = makeBoards(rows);
         if (metric === 'ALL') {
+          const members = rows.map((row) => ({
+            user: {
+              id: row.id,
+              telegram_id: row.telegram_id,
+              username: row.username,
+              first_name: row.first_name,
+              last_name: row.last_name,
+              photo_url: row.photo_url
+            },
+            role: row.role || 'MEMBER'
+          }));
+
           return json(res, 200, {
             metric: 'ALL',
             rule: 'value desc → updated_at asc → same place',
+            members,
             boards
           }, origin);
         }
