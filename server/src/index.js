@@ -34,7 +34,7 @@ async function main() {
     platega: {
       merchantId: env.PLATEGA_MERCHANT_ID || '',
       secret: env.PLATEGA_SECRET || '',
-      amount: Number(env.PLATEGA_AMOUNT_RUB) || 0,
+      amount: Number(env.PLATEGA_AMOUNT_RUB) || 99,
       currency: 'RUB',
       periodDays: Number(env.PLATEGA_PERIOD_DAYS) || 30,
       returnUrl: env.PLATEGA_RETURN_URL || '',
