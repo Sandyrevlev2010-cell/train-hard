@@ -32,6 +32,7 @@ MODULES = [
     ('arena-api', 'src/arena/arena-api.js'),
     ('sync-bridge', 'src/sync/sync-bridge.js'),
     ('arena-ui', 'src/arena/arena-ui.js'),
+    ('mobile-input', 'src/ui/mobile-input.js'),
     ('interval-timer', 'src/timer/interval-timer.js'),
     ('pwa-register', 'src/pwa/pwa-register.js'),
 ]
