@@ -12,7 +12,7 @@
   'use strict';
 
   window.TRAINHARD_PREMIUM = {
-    priceLabel: 'СБП',
+    priceLabel: '99 ₽',
     periodDays: 30,
 
     payments: {
@@ -20,6 +20,7 @@
       provider: 'platega',
       paymentMethod: 2,
       currency: 'RUB',
+      amountRub: 99,
       apiBase: 'https://train-hard.onrender.com'
     }
   };
