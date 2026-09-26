@@ -2818,6 +2818,85 @@ function createApp(opts) {
     }
   );
 
+  /* ---------- Premium: Platega callback ---------- */
+
+  on(
+    'POST',
+    /^\/payments\/callback$/,
+    async (c) => {
+      const expectedMerchant = String(platega.merchantId || '');
+      const expectedSecret = String(platega.secret || '');
+      if (
+        !expectedMerchant ||
+        !expectedSecret ||
+        c.req.headers['x-merchantid'] !== expectedMerchant ||
+        c.req.headers['x-secret'] !== expectedSecret
+      ) {
+        return { code: 401, body: { error: 'unauthorized' } };
+      }
+
+      const txId = String(c.body.id || '').trim();
+      const status = String(c.body.status || '').toUpperCase();
+      const method = Number(c.body.paymentMethod);
+      const amount = Number(c.body.amount);
+      const currency = String(c.body.currency || '').toUpperCase();
+
+      if (
+        !/^[0-9a-fA-F-]{20,64}$/.test(txId) ||
+        status !== 'CONFIRMED' ||
+        method !== 2 ||
+        !isFinite(amount) ||
+        amount < platega.amount ||
+        currency !== 'RUB'
+      ) {
+        return { code: 200, body: { ok: true } };
+      }
+
+      /* Получаем транзакцию у Platega и сверяем payload с пользователем.
+       * Callback сам по себе не содержит userId, поэтому не доверяем ему. */
+      const doFetch = platega.fetch || (typeof fetch === 'function' ? fetch : null);
+      if (!doFetch) return { code: 503, body: { error: 'payments not configured' } };
+
+      try {
+        const r = await doFetch(
+          'https://app.platega.io/transaction/' + encodeURIComponent(txId),
+          {
+            method: 'GET',
+            headers: {
+              'X-MerchantId': platega.merchantId,
+              'X-Secret': platega.secret
+            }
+          }
+        );
+        const j = await r.json().catch(() => null);
+        if (!r.ok || !j) return { code: 200, body: { ok: true } };
+
+        const payload = String(j.payload || '');
+        const m = /^trainhard:([^:]+):([A-Za-z0-9_-]{1,64})$/.exec(payload);
+        if (!m) return { code: 200, body: { ok: true } };
+
+        const userId = m[1];
+        const label = m[2];
+        const until = Date.now() + platega.periodDays * 86400000;
+
+        const ent = await store.getEntitlement(userId);
+        if (ent && ent.label === label && ent.until > Date.now()) {
+          return { code: 200, body: { ok: true } };
+        }
+
+        await store.setEntitlement(userId, {
+          until,
+          source: 'platega-sbp',
+          label
+        });
+
+        return { code: 200, body: { ok: true } };
+      } catch (e) {
+        return { code: 200, body: { ok: true } };
+      }
+    }
+  );
+
 
   /* ---------- синхронизация ---------- */
 
