@@ -9,6 +9,7 @@ on:
       - 'build.py'
       - 'patches.py'
       - 'theme-assets/**'
+      - 'src/ui/**'
   workflow_dispatch:
 
 permissions:
