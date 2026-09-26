@@ -2,6 +2,7 @@
  * Train Hard — конфигурация Premium и платежей
  *
  * Текущий план: 30 дней Premium через Platega / СБП.
+ * Frontend-сборка обновляется автоматически через GitHub Actions.
  *
  * Секреты Platega находятся ТОЛЬКО на backend Render:
  *   PLATEGA_MERCHANT_ID
