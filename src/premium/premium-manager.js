@@ -150,23 +150,61 @@
   function sanitizePending(p) {
     if (!p || typeof p !== 'object' || Array.isArray(p)) return null;
     if (typeof p.label !== 'string' || !LABEL_RE.test(p.label)) return null;
-    return { label: p.label, at: isFinite(Number(p.at)) ? Number(p.at) : 0 };
+    if (typeof p.transactionId !== 'string' || !p.transactionId) return null;
+    return {
+      label: p.label,
+      transactionId: p.transactionId,
+      url: typeof p.url === 'string' ? p.url.slice(0, 2048) : '',
+      at: isFinite(Number(p.at)) ? Number(p.at) : 0
+    };
   }
   function readPending() { return sanitizePending(Storage ? Storage.get(PENDING_KEY, null) : null); }
-  function savePending(label) { if (Storage) Storage.set(PENDING_KEY, { label: label, at: Date.now() }); }
+  function savePending(label, transactionId, url) {
+    if (Storage) Storage.set(PENDING_KEY, {
+      label: label,
+      transactionId: String(transactionId || ''),
+      url: typeof url === 'string' ? url : '',
+      at: Date.now()
+    });
+  }
   function clearPending() { if (Storage) Storage.remove(PENDING_KEY); }
 
   /* ---------- покупка ---------- */
   function checkout() {
     var a = Analytics(); if (a) a.track('buy_click');
-    if (!paymentsReady()) return { ok: false, reason: 'payments-not-configured' };
+    if (!paymentsReady()) return Promise.resolve({ ok: false, reason: 'payments-not-configured' });
 
     var label = Payments.newLabel();
-    savePending(label);
-    rerender();
-    var res = Payments.open(label);
-    if (!res.ok && res.blocked) return { ok: false, reason: 'popup-blocked', url: res.url };
-    return { ok: true, label: label };
+    return Promise.resolve(Payments.open(label)).then(function (res) {
+      if (!res || !res.ok) return res || { ok: false, reason: 'create-failed' };
+
+      savePending(label, res.transactionId, res.url);
+      setUiState({ popupUrl: res.url, verifyFailed: false, verifyUnavailable: false });
+      rerender();
+
+      var opened = false;
+      try {
+        if (res.url) {
+          var w = window.open(res.url, '_blank', 'noopener,noreferrer');
+          opened = !!w;
+        }
+      } catch (e) {}
+
+      if (!opened) {
+        setUiState({ popupUrl: res.url });
+        rerender();
+      } else {
+        setUiState({ popupUrl: null });
+        rerender();
+      }
+
+      return {
+        ok: true,
+        label: label,
+        transactionId: res.transactionId,
+        url: res.url
+      };
+    });
   }
 
   /* Пользователь вернулся в приложение из окна оплаты без перезагрузки */
@@ -228,9 +266,8 @@
     var ready = paymentsReady();
     var pending = readPending();
     var pay = c.payments || {};
-    var tonAddr = (typeof pay.tonAddress === 'string' && /^[A-Za-z0-9_-]{48}$/.test(pay.tonAddress)) ? pay.tonAddress : '';
-    var tonAmt = isFinite(Number(pay.tonAmount)) && Number(pay.tonAmount) > 0 ? Number(pay.tonAmount) : 0;
-    var walletUrl = (pending && Payments && Payments.transferUrl) ? Payments.transferUrl(pending.label) : '';
+    var rubAmount = isFinite(Number(pay.amountRub)) && Number(pay.amountRub) > 0 ? Number(pay.amountRub) : 0;
+    var paymentUrl = pending && pending.url ? pending.url : '';
     var h = [];
 
     /* Шапка */
@@ -269,19 +306,13 @@
         h.push('<div class="thp-card thp-card--pay"><b>Проверка подписки временно недоступна</b><span>Не удалось связаться с сервером подтверждения. Подписка не активирована — попробуй «Восстановить покупку» позже.</span></div>');
         h.push('<button class="thp-buy" data-act="restore">Проверить ещё раз</button>');
       } else if (pending) {
-        /* TON-перевод: адрес + сумма + код платежа + QR.
-           Активация — ТОЛЬКО подтверждением транзакции в блокчейне. */
-        h.push('<div class="thp-card thp-card--pay"><b>Оплата переводом TON</b><span>Переведи <b>' + tonAmt + ' TON</b> на адрес проекта и укажи в комментарии к переводу код платежа — по нему платёж будет зачтён.</span></div>');
+        h.push('<div class="thp-card thp-card--pay"><b>Оплата через СБП</b><span>Нажми «Открыть оплату», выбери СБП и подтверди платёж в приложении своего банка. После оплаты вернись в Train Hard и нажми «Я оплатил — проверить».</span></div>');
         h.push('<div class="thp-card thp-ton">');
-        h.push('<div class="thp-ton-lbl">Код платежа (комментарий к переводу)</div>');
+        h.push('<div class="thp-ton-lbl">Платёж</div>');
         h.push('<div class="thp-ton-code">' + esc(pending.label) + '</div>');
-        h.push('<div class="thp-ton-lbl">Адрес кошелька TON</div>');
-        h.push('<div class="thp-ton-addr">' + esc(tonAddr) + '</div>');
-        h.push('<div class="thp-ton-lbl">Сумма</div><div class="thp-ton-amt">' + tonAmt + ' TON · за ' + periodDays() + ' дней</div>');
-        h.push('<div class="thp-ton-qr"><canvas aria-label="QR для оплаты"></canvas><div class="thp-ton-qrhint">QR открывает кошелёк с заполненными адресом, суммой и комментарием</div></div>');
-        h.push('<button class="thp-ghost" data-act="copy-addr">Скопировать адрес</button>');
-        h.push('<button class="thp-ghost" data-act="copy-label">Скопировать код платежа</button>');
-        if (walletUrl) h.push('<a class="thp-linkbtn" href="' + esc(walletUrl) + '">Открыть в кошельке</a>');
+        h.push('<div class="thp-ton-lbl">Сумма</div>');
+        h.push('<div class="thp-ton-amt">' + (rubAmount || esc(c.priceLabel)) + ' ₽ · за ' + periodDays() + ' дней</div>');
+        if (paymentUrl) h.push('<a class="thp-linkbtn" href="' + esc(paymentUrl) + '" target="_blank" rel="noopener noreferrer">Открыть оплату СБП</a>');
         h.push('</div>');
         h.push('<button class="thp-buy" data-act="restore">Я оплатил — проверить</button>');
       } else if (ready) {
@@ -292,8 +323,8 @@
       }
 
       if (uiState.popupUrl) {
-        h.push('<div class="thp-card thp-card--pay"><b>Браузер заблокировал окно оплаты</b><span>Открой ссылку вручную — оплата пройдёт на защищённой странице ЮKassa.</span>');
-        h.push('<a class="thp-linkbtn" href="' + esc(uiState.popupUrl) + '" target="_blank" rel="noopener noreferrer">Открыть страницу оплаты</a></div>');
+        h.push('<div class="thp-card thp-card--pay"><b>Окно оплаты не открылось автоматически</b><span>Открой защищённую страницу Platega вручную.</span>');
+        h.push('<a class="thp-linkbtn" href="' + esc(uiState.popupUrl) + '" target="_blank" rel="noopener noreferrer">Открыть оплату СБП</a></div>');
       }
     }
 
@@ -301,8 +332,8 @@
 
     /* условия — коротко и честно */
     h.push('<div class="thp-terms">');
-    h.push('Оплата — перевод TON на кошелёк проекта: карта не запрашивается, данные карты в Train Hard не попадают. ');
-    h.push('Подписка активируется только после подтверждения перевода в блокчейне TON и действует ' + periodDays() + ' дней без автопродления. ');
+    h.push('Оплата проходит через Platega по СБП. Данные банковской карты в Train Hard не запрашиваются. ');
+    h.push('Premium активируется только после подтверждения успешного платежа сервером и действует ' + periodDays() + ' дней без автопродления. ');
     h.push('Premium и прогресс хранятся на этом устройстве: при очистке данных браузера они не восстановятся — аккаунты и синхронизация появятся в следующей версии.');
     h.push('</div>');
 
@@ -349,9 +380,12 @@
           e.stopPropagation();
           var a = btn.getAttribute('data-act');
           if (a === 'buy') {
-            var res = checkout();
-            if (!res.ok && res.reason === 'popup-blocked') setUiState({ popupUrl: res.url });
-            rerender();
+            checkout().then(function (res) {
+              if (!res || !res.ok) {
+                setUiState({ popupUrl: null, verifyUnavailable: true });
+                rerender();
+              }
+            });
           } else if (a === 'restore') {
             doRestore();
           } else if (a === 'copy-addr') {
@@ -367,16 +401,16 @@
   function doRestore() {
     var r = restore();
     if (r.status === 'active') { rerender(); return; }
-    if (r.status === 'verifying') { verifyPending(r.label); return; }
+    if (r.status === 'verifying') { verifyPending(r.transactionId); return; }
     /* Нечего восстанавливать — честно сообщаем */
     setUiState({ verifyFailed: false, verifyUnavailable: false });
     rerender();
     var t = mountEl.querySelector('.thp-terms');
     if (t) {
-      var note = document.createElement('div');   /* безопасный DOM API, статический текст */
+      var note = document.createElement('div');
       note.className = 'thp-card thp-card--pay';
       var b = document.createElement('b'); b.textContent = 'Покупок не найдено';
-      var s = document.createElement('span'); s.textContent = 'На этом устройстве нет подтверждённой оплаты. Если ты платил — нажми «Я оплатил — проверить»: перевод ищется в блокчейне TON по коду платежа.';
+      var s = document.createElement('span'); s.textContent = 'На этом устройстве нет подтверждённой оплаты. Если ты уже оплатил через СБП — нажми «Я оплатил — проверить».';
       note.appendChild(b); note.appendChild(s);
       t.parentNode.insertBefore(note, t);
       setTimeout(function () { if (note.parentNode) note.parentNode.removeChild(note); }, 6000);
@@ -388,10 +422,13 @@
     if (!Payments || !Payments.onReturn) return;
     var r = Payments.onReturn();
     if (!r) return;
-    if (r.label) {
-      savePending(r.label);
+    if (r.transactionId) {
+      var p = readPending();
+      if (p) {
+        savePending(p.label, r.transactionId, p.url);
+      }
       if (paymentsReady() && Payments.autoVerify) {
-        verifyPending(r.label);
+        verifyPending(r.transactionId);
       } else {
         /* серверной проверки нет — только честный статус, без активации */
         setUiState({ verifying: false });
@@ -402,12 +439,14 @@
     }
   }
 
-  function verifyPending(label) {
+  function verifyPending(transactionId) {
     setUiState({ verifying: true, verifyFailed: false, verifyUnavailable: false });
     rerender();
     if (!Payments.verify) { setUiState({ verifying: false, verifyUnavailable: true }); rerender(); return; }
-    Payments.verify(label).then(function (ans) {
+    Payments.verify(transactionId).then(function (ans) {
       setUiState({ verifying: false });
+      var p = readPending();
+      var label = p ? p.label : '';
       var applied = readRecord();
       if (applied && applied.label === label && applied.until > Date.now()) {
         /* этот платёж уже применён — повторная обработка невозможна (anti-replay) */
@@ -415,10 +454,10 @@
       }
       if (ans && ans.ok === true && isFinite(Number(ans.until))) {
         /* подтверждено доверенной стороной → активация */
-        var rec = activate({ source: 'ton-verify', label: label, track: false });
+        var rec = activate({ source: 'platega-sbp', label: label, track: false });
         var ts = Number(ans.until);
         if (ts > rec.until) { /* сервер указал точный срок — доверяем ему */
-          writeRecord({ until: Math.floor(ts), activatedAt: Date.now(), source: 'ton-verify', label: label });
+          writeRecord({ until: Math.floor(ts), activatedAt: Date.now(), source: 'platega-sbp', label: label });
           pushToReact();
         }
         var a = Analytics(); if (a) a.track('purchase_success');
