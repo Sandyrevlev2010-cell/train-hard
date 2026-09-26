@@ -45,14 +45,18 @@ function createApp(opts) {
   const store = opts.store;
   const botToken = opts.botToken || '';
 
-  const ton = Object.assign(
+  const platega = Object.assign(
     {
-      address: '',
-      amountNano: 0,
+      merchantId: '',
+      secret: '',
+      amount: 0,
+      currency: 'RUB',
       periodDays: 30,
+      returnUrl: '',
+      failedUrl: '',
       fetch: null
     },
-    opts.ton || {}
+    opts.platega || {}
   );
 
   const corsOrigin =
