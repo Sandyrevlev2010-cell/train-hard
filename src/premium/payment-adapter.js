@@ -1,122 +1,127 @@
 /* =============================================================
- * Train Hard — PaymentAdapter (TON-переводы)
+ * Train Hard — PaymentAdapter (Platega / СБП)
  *
- * План подписки: tonAmount TON / periodDays дней (конфиг premium-config).
+ * Интерфейс намеренно сохранён прежним:
+ *   isConfigured / newLabel / open / onReturn / verify
  *
- * • Адрес кошелька — ПУБЛИЧЕНЫЙ идентификатор получателя, не секрет.
- * • Секретов в клиенте нет: подтверждение платежа — открытый блокчейн TON
- *   (публичный API toncenter), а не утверждение клиента.
- * • Каждый платёж сопровождается уникальным КОММЕНТАРОМ (label вида
- *   th-xxxxxxxx) — по нему перевод находится среди входящих транзакций.
- *   Label связывает флоу с конкретной попыткой оплаты, но НЕ является
- *   доказательством оплаты: доказательство — только найденная транзакция
- *   с корректной суммой.
- * • verify() — frontend-проверка через публичный API: это удобство и
- *   лучший доступный вариант без backend, но НЕ security boundary
- *   (см. docs/PREMIUM-PAYMENTS.md, «ограничения»).
- *
- * Интерфейс совместим с прежним адаптером (isConfigured/newLabel/
- * open/onReturn/verify) — PremiumManager не меняется структурно.
+ * Секреты Platega НИКОГДА не попадают во frontend.
+ * Создание и проверка платежа выполняются backend.
  * ============================================================= */
 (function () {
   'use strict';
 
-  /* Публичный API блокчейна TON (без ключа; при росте нагрузки ключ
-     запрашивается бесплатно и живёт только на сервере будущего backend) */
-  var TONCENTER = 'https://toncenter.com/api/v2/getTransactions';
+  var CFG = function () {
+    return (window.TRAINHARD_PREMIUM || {}).payments || {};
+  };
 
-  var LABEL_RE = /^[A-Za-z0-9_-]{1,64}$/;
-  var ADDR_RE = /^[A-Za-z0-9_-]{48}$/;          // user-friendly TON-адрес
-
-  var CFG = function () { return (window.TRAINHARD_PREMIUM || {}).payments || {}; };
-
-  function addr() {
-    var a = CFG().tonAddress;
-    return (typeof a === 'string' && ADDR_RE.test(a)) ? a : '';
-  }
-  function amountNano() {
-    var t = Number(CFG().tonAmount);
-    if (!isFinite(t) || t < 0.1) return 0;
-    return Math.round(t * 1e9);
+  function apiBase() {
+    var c = CFG();
+    var a = String(c.apiBase || 'https://train-hard.onrender.com').replace(/\/+$/, '');
+    return a;
   }
 
-  /* ---------- готовность ---------- */
+  function sessionToken() {
+    try {
+      return localStorage.getItem('trainhard_api_session') || '';
+    } catch (e) {
+      return '';
+    }
+  }
+
   function isConfigured() {
     var c = CFG();
-    return !!(c && c.enabled && c.provider === 'ton' && addr() && amountNano() > 0);
+    return !!(c && c.enabled && c.provider === 'platega' && c.paymentMethod === 2 && apiBase());
   }
 
-  /* ---------- label платежа ---------- */
   function newLabel() {
     var s = '';
-    for (var i = 0; i < 4; i++) s += Math.floor(Math.random() * 0xffff).toString(16).padStart(4, '0');
+    try {
+      if (window.crypto && crypto.getRandomValues) {
+        var b = new Uint8Array(8);
+        crypto.getRandomValues(b);
+        for (var i = 0; i < b.length; i++) s += b[i].toString(16).padStart(2, '0');
+      }
+    } catch (e) {}
+    if (!s) {
+      for (var j = 0; j < 16; j++) s += Math.floor(Math.random() * 16).toString(16);
+    }
     return 'th-' + s;
   }
 
-  /* ---------- ссылка на перевод ---------- */
-  /* ton://transfer/<addr>?amount=<nano>&text=<label> — стандартная
-     deep-link схема TON-кошельков (Tonkeeper/Tonhub/…): подставляет
-     адрес, сумму и комментарий перевода. */
-  function transferUrl(label) {
-    if (!isConfigured() || !LABEL_RE.test(label || '')) return '';
-    return 'ton://transfer/' + addr() + '?amount=' + amountNano() + '&text=' + encodeURIComponent(label);
+  function request(path, method, body) {
+    var token = sessionToken();
+    if (!token) return Promise.resolve({ ok: false, status: 401, body: null });
+    var headers = { 'Authorization': 'Bearer ' + token };
+    if (body !== undefined) headers['Content-Type'] = 'application/json';
+    return fetch(apiBase() + path, {
+      method: method || 'GET',
+      headers: headers,
+      body: body === undefined ? undefined : JSON.stringify(body),
+      credentials: 'omit'
+    }).then(function (r) {
+      return r.json().catch(function () { return null; }).then(function (body2) {
+        return { ok: r.ok, status: r.status, body: body2 };
+      });
+    }).catch(function () {
+      return { ok: false, status: 0, body: null };
+    });
   }
 
-  /* Открытие оплаты: для TON окно не открываем — экран Premium сам
-     показывает адрес/сумму/QR и кнопку «Открыть в кошельке». */
   function open(label) {
-    if (!isConfigured() || !LABEL_RE.test(label || '')) return { ok: false, reason: 'not-configured' };
-    return { ok: true, url: transferUrl(label) };
+    if (!isConfigured() || !/^[A-Za-z0-9_-]{1,64}$/.test(label || '')) {
+      return Promise.resolve({ ok: false, reason: 'not-configured' });
+    }
+
+    return request('/payments/create', 'POST', { label: label }).then(function (r) {
+      if (!r.ok || !r.body || !r.body.ok || !r.body.url || !r.body.transactionId) {
+        return { ok: false, reason: r.status === 401 ? 'unauthorized' : 'create-failed' };
+      }
+      return {
+        ok: true,
+        url: r.body.url,
+        transactionId: r.body.transactionId,
+        label: label
+      };
+    });
   }
 
-  /* Легаси-очистка возвратов старого web-флоу (?th_pay=return&label=…):
-     URL чистим, pending ставим, Premium НЕ активируем. Возврат сам по
-     себе ничего не доказывает. Автопроверки по возврату нет (autoVerify). */
   function onReturn() {
     try {
       var q = new URLSearchParams(location.search);
-      if (q.get('th_pay') !== 'return') return null;
-      var label = (q.get('label') || '').trim();
-      q.delete('th_pay'); q.delete('label');
+      var id = (q.get('th_pay_id') || '').trim();
+      if (!id) return null;
+      q.delete('th_pay_id');
       var clean = location.pathname + (q.toString() ? '?' + q : '') + location.hash;
       try { history.replaceState(null, '', clean); } catch (e) {}
-      return LABEL_RE.test(label) ? { label: label } : { label: '' };
-    } catch (e) { return null; }
+      return { transactionId: id };
+    } catch (e) {
+      return null;
+    }
   }
 
-  /* ---------- подтверждение платежа по блокчейну ---------- */
-  /* Ищем среди последних входящих переводов на адрес проекта транзакцию
-     с комментарием == label и суммой >= цены плана.
-     → Promise<{ok:true, until:ms}> | Promise<{ok:false}> | null (сеть) */
-  function verify(label) {
-    if (!isConfigured() || !LABEL_RE.test(label || '')) return null;
-    var url = TONCENTER + '?address=' + encodeURIComponent(addr()) + '&limit=50';
-    return fetch(url, { method: 'GET', credentials: 'omit' })
-      .then(function (r) { return r.json(); })
-      .then(function (j) {
-        try {
-          var list = (j && j.ok && Array.isArray(j.result)) ? j.result : [];
-          var need = amountNano();
-          var period = Number((window.TRAINHARD_PREMIUM || {}).periodDays) || 30;
-          for (var i = 0; i < list.length; i++) {
-            var tx = list[i];
-            if (tx.in !== true) continue;                          /* только входящие */
-            if (String(tx.message || '') !== label) continue;      /* комментарий = код платежа */
-            if (Number(tx.value) < need) continue;                 /* сумма не меньше цены плана */
-            return { ok: true, until: Date.now() + period * 86400000 };
-          }
-          return { ok: false };
-        } catch (e) { return null; }
-      })
-      .catch(function () { return null; });
+  function verify(transactionId) {
+    if (!isConfigured() || !transactionId) return null;
+    return request('/payments/verify', 'POST', {
+      transactionId: String(transactionId)
+    }).then(function (r) {
+      if (!r.ok || !r.body) {
+        if (r.status === 502) return null;
+        return { ok: false };
+      }
+      if (r.body.ok === true) {
+        return { ok: true, until: Number(r.body.until) || 0 };
+      }
+      return { ok: false };
+    }).catch(function () {
+      return null;
+    });
   }
 
   window.TrainHardPayments = {
-    provider: 'ton',
-    autoVerify: false,          /* проверка только по явному клику пользователя */
+    provider: 'platega',
+    autoVerify: false,
     isConfigured: isConfigured,
     newLabel: newLabel,
-    transferUrl: transferUrl,
     open: open,
     onReturn: onReturn,
     verify: verify
