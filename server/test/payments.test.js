@@ -9,7 +9,7 @@ function plategaMock(body, status = 200) {
   return {
     merchantId: 'MERCHANT',
     secret: 'SECRET',
-    amount: 299,
+    amount: 99,
     periodDays: 30,
     fetch: async (url, opts) => {
       calls++;
@@ -51,7 +51,7 @@ test('payments: CONFIRMED СБП → Premium на 30 дней', async () => {
     id: tx,
     status: 'CONFIRMED',
     paymentMethod: 'SBPQR',
-    paymentDetails: { amount: 299, currency: 'RUB' },
+    paymentDetails: { amount: 99, currency: 'RUB' },
     payload: 'trainhard:1:th-abc123'
   });
   const env = makeServer({ platega: p });
@@ -72,10 +72,10 @@ test('payments: CONFIRMED СБП → Premium на 30 дней', async () => {
 
 test('payments: чужой payload / неверный статус / сумма → Premium не выдаётся', async () => {
   const cases = [
-    { status: 'CONFIRMED', paymentMethod: 'SBPQR', paymentDetails: { amount: 299 }, payload: 'trainhard:2:th-x' },
-    { status: 'PENDING', paymentMethod: 'SBPQR', paymentDetails: { amount: 299 }, payload: 'trainhard:1:th-x' },
+    { status: 'CONFIRMED', paymentMethod: 'SBPQR', paymentDetails: { amount: 99 }, payload: 'trainhard:2:th-x' },
+    { status: 'PENDING', paymentMethod: 'SBPQR', paymentDetails: { amount: 99 }, payload: 'trainhard:1:th-x' },
     { status: 'CONFIRMED', paymentMethod: 'SBPQR', paymentDetails: { amount: 100 }, payload: 'trainhard:1:th-x' },
-    { status: 'CONFIRMED', paymentMethod: 'CARD', paymentDetails: { amount: 299 }, payload: 'trainhard:1:th-x' }
+    { status: 'CONFIRMED', paymentMethod: 'CARD', paymentDetails: { amount: 99 }, payload: 'trainhard:1:th-x' }
   ];
 
   for (const txData of cases) {
@@ -97,7 +97,7 @@ test('payments: повторная верификация того же transact
     id: tx,
     status: 'CONFIRMED',
     paymentMethod: 'SBPQR',
-    paymentDetails: { amount: 299 },
+    paymentDetails: { amount: 99 },
     payload: 'trainhard:1:th-once'
   });
   const env = makeServer({ platega: p });
@@ -111,7 +111,7 @@ test('payments: повторная верификация того же transact
 });
 
 test('payments: invalid transaction id → 400; provider off → 503', async () => {
-  const env = makeServer({ platega: { merchantId: 'M', secret: 'S', amount: 299, periodDays: 30, fetch: null } });
+  const env = makeServer({ platega: { merchantId: 'M', secret: 'S', amount: 99, periodDays: 30, fetch: null } });
   const { token } = await env.login({ id: 1 });
 
   assert.equal(
