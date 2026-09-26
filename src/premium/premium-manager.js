@@ -142,7 +142,7 @@
   function restore() {
     if (isPremium()) return { status: 'active', until: until() };
     var p = readPending();
-    if (p && p.label && paymentsReady()) return { status: 'verifying', label: p.label };
+    if (p && p.transactionId && paymentsReady()) return { status: 'verifying', transactionId: p.transactionId };
     return { status: 'none' };
   }
 
