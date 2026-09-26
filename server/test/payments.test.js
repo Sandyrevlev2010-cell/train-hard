@@ -1,73 +1,137 @@
-/* §40/платежи: серверная верификация TON через toncenter (мок), анти-повтор по label. */
+/* §40/платежи: серверная верификация Platega / СБП (мок), анти-повтор. */
 'use strict';
 const { test } = require('node:test');
 const assert = require('node:assert');
 const { makeServer } = require('./helpers');
 
-function tonMock(txs) {
+function plategaMock(body, status = 200) {
   let calls = 0;
   return {
-    address: 'UQWALLET', amountNano: 1000000000, periodDays: 30,
-    fetch: async () => { calls++; return { json: async () => ({ ok: true, result: txs }) }; },
+    merchantId: 'MERCHANT',
+    secret: 'SECRET',
+    amount: 299,
+    periodDays: 30,
+    fetch: async (url, opts) => {
+      calls++;
+      const response = typeof body === 'function' ? body(url, opts) : body;
+      return {
+        ok: status >= 200 && status < 300,
+        status,
+        json: async () => response
+      };
+    },
     get calls() { return calls; }
   };
 }
 
-test('payments: найдена входящая транзакция с label и суммой → ok, выдан until', async () => {
-  const ton = tonMock([{ in: true, value: '1000000000', message: 'th-abc123' }]);
-  const env = makeServer({ ton });
+test('payments: create возвращает ссылку Platega СБП', async () => {
+  const p = plategaMock({
+    transactionId: '3fa85f64-5717-4562-b3fc-2c463f66afa6',
+    redirect: 'https://pay.platega.io/sbp',
+    status: 'PENDING'
+  });
+  const env = makeServer({ platega: p });
   const { token } = await env.login({ id: 1 });
 
-  const r = await env.call('POST', '/payments/verify', { token, body: { label: 'th-abc123' } });
+  const r = await env.call('POST', '/payments/create', {
+    token,
+    body: { label: 'th-abc123' },
+    headers: { 'Idempotency-Key': 'th-abc123' }
+  });
+
   assert.equal(r.code, 200);
   assert.equal(r.body.ok, true);
-  const until = r.body.until;
-  assert.ok(until > Date.now() && until <= Date.now() + 31 * 86400000);
-
-  const p = await env.call('GET', '/premium', { token });
-  assert.equal(p.body.premium_until, until);
+  assert.match(r.body.url, /^https:\/\/pay\.platega\.io/);
+  assert.equal(r.body.status, 'PENDING');
 });
 
-test('payments: недостаточная сумма / чужой label / исходящая → ok:false', async () => {
-  const ton = tonMock([
-    { in: true, value: '500000000', message: 'th-low' },
-    { in: true, value: '1000000000', message: 'th-other' },  /* label th-none в моке отсутствует */
-    { in: false, value: '1000000000', message: 'th-out' }
-  ]);
-  const env = makeServer({ ton });
+test('payments: CONFIRMED СБП → Premium на 30 дней', async () => {
+  const tx = '3fa85f64-5717-4562-b3fc-2c463f66afa6';
+  const p = plategaMock({
+    id: tx,
+    status: 'CONFIRMED',
+    paymentMethod: 'SBPQR',
+    paymentDetails: { amount: 299, currency: 'RUB' },
+    payload: 'trainhard:1:th-abc123'
+  });
+  const env = makeServer({ platega: p });
   const { token } = await env.login({ id: 1 });
-  for (const label of ['th-low', 'th-none', 'th-out']) {
-    const r = await env.call('POST', '/payments/verify', { token, body: { label } });
+
+  const r = await env.call('POST', '/payments/verify', {
+    token,
+    body: { transactionId: tx }
+  });
+
+  assert.equal(r.code, 200);
+  assert.equal(r.body.ok, true);
+  assert.ok(r.body.until > Date.now());
+
+  const premium = await env.call('GET', '/premium', { token });
+  assert.equal(premium.body.premium_until, r.body.until);
+});
+
+test('payments: чужой payload / неверный статус / сумма → Premium не выдаётся', async () => {
+  const cases = [
+    { status: 'CONFIRMED', paymentMethod: 'SBPQR', paymentDetails: { amount: 299 }, payload: 'trainhard:2:th-x' },
+    { status: 'PENDING', paymentMethod: 'SBPQR', paymentDetails: { amount: 299 }, payload: 'trainhard:1:th-x' },
+    { status: 'CONFIRMED', paymentMethod: 'SBPQR', paymentDetails: { amount: 100 }, payload: 'trainhard:1:th-x' },
+    { status: 'CONFIRMED', paymentMethod: 'CARD', paymentDetails: { amount: 299 }, payload: 'trainhard:1:th-x' }
+  ];
+
+  for (const txData of cases) {
+    const p = plategaMock({ ...txData, id: '3fa85f64-5717-4562-b3fc-2c463f66afa6' });
+    const env = makeServer({ platega: p });
+    const { token } = await env.login({ id: 1 });
+    const r = await env.call('POST', '/payments/verify', {
+      token,
+      body: { transactionId: txData.id }
+    });
     assert.equal(r.body.ok, false);
+    assert.equal((await env.call('GET', '/premium', { token })).body.premium_until, null);
   }
-  assert.equal((await env.call('GET', '/premium', { token })).body.premium_until, null);
 });
 
-test('payments: повторная верификация того же label не продлевает и не дёргает API', async () => {
-  const ton = tonMock([{ in: true, value: '1000000000', message: 'th-once' }]);
-  const env = makeServer({ ton });
+test('payments: повторная верификация того же transaction → тот же until', async () => {
+  const tx = '3fa85f64-5717-4562-b3fc-2c463f66afa6';
+  const p = plategaMock({
+    id: tx,
+    status: 'CONFIRMED',
+    paymentMethod: 'SBPQR',
+    paymentDetails: { amount: 299 },
+    payload: 'trainhard:1:th-once'
+  });
+  const env = makeServer({ platega: p });
   const { token } = await env.login({ id: 1 });
-  const a = await env.call('POST', '/payments/verify', { token, body: { label: 'th-once' } });
-  const b = await env.call('POST', '/payments/verify', { token, body: { label: 'th-once' } });
-  assert.equal(a.body.until, b.body.until);      /* анти-повтор: тот же until */
-  assert.equal(ton.calls, 1);
+
+  const a = await env.call('POST', '/payments/verify', { token, body: { transactionId: tx } });
+  const b = await env.call('POST', '/payments/verify', { token, body: { transactionId: tx } });
+
+  assert.equal(a.body.until, b.body.until);
+  assert.equal(p.calls, 2);
 });
 
-test('payments: невалидный label → 400; платежи не настроены → 503', async () => {
-  const env = makeServer({ ton: { address: 'UQWALLET', amountNano: 1e9, periodDays: 30, fetch: async () => ({ json: async () => ({ result: [] }) }) } });
+test('payments: invalid transaction id → 400; provider off → 503', async () => {
+  const env = makeServer({ platega: { merchantId: 'M', secret: 'S', amount: 299, periodDays: 30, fetch: null } });
   const { token } = await env.login({ id: 1 });
-  assert.equal((await env.call('POST', '/payments/verify', { token, body: { label: 'плохо!' } })).code, 400);
 
-  const off = makeServer({ ton: { address: '', amountNano: 0, fetch: null } });
+  assert.equal(
+    (await env.call('POST', '/payments/verify', {
+      token,
+      body: { transactionId: 'bad' }
+    })).code,
+    400
+  );
+
+  const off = makeServer({
+    platega: { merchantId: '', secret: '', amount: 0, fetch: null }
+  });
   const u = await off.login({ id: 1 });
-  assert.equal((await off.call('POST', '/payments/verify', { token: u.token, body: { label: 'th-x' } })).code, 503);
-});
 
-test('payments: blockchain API недоступен → 502, entitlement не меняется', async () => {
-  const ton = { address: 'UQW', amountNano: 1e9, periodDays: 30, fetch: async () => { throw new Error('down'); } };
-  const env = makeServer({ ton });
-  const { token } = await env.login({ id: 1 });
-  const r = await env.call('POST', '/payments/verify', { token, body: { label: 'th-down' } });
-  assert.equal(r.code, 502);
-  assert.equal((await env.call('GET', '/premium', { token })).body.premium_until, null);
+  assert.equal(
+    (await off.call('POST', '/payments/verify', {
+      token: u.token,
+      body: { transactionId: '3fa85f64-5717-4562-b3fc-2c463f66afa6' }
+    })).code,
+    503
+  );
 });
