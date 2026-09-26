@@ -93,7 +93,7 @@
   ];
   var MEDALS = { 1: '🥇', 2: '🥈', 3: '🥉' };
   var ROLE_LABEL = { OWNER: '👑 владелец', ADMIN: 'админ', MEMBER: 'участник' };
-  var st = { view: 'home', group: null, stats: { squat: null, bench: null, deadlift: null }, boards: {}, metric: METRICS[0], busy: {}, inviteCode: null };
+  var st = { view: 'home', group: null, stats: { squat: null, bench: null, deadlift: null }, members: [], boards: {}, metric: METRICS[0], busy: {}, inviteCode: null };
   var root = null, panel = null, open = false;
 
   function esc(s) { return String(s == null ? '' : s).replace(/[&<>"']/g, function (c) { return { '&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#039;' }[c]; }); }
@@ -224,7 +224,7 @@
       var pair=await Promise.all([API.request('GET','/api/groups/'+encodeURIComponent(gid)),API.request('GET','/api/groups/'+encodeURIComponent(gid)+'/leaderboard?metric=ALL'),API.request('GET','/api/arena/stats')]);
       if(!alive())return; var g=pair[0],lb=pair[1],sr=pair[2];
       if(!g.ok){clear();b.appendChild(networkFail(g,function(){openGroup(gid,forceStats);}));return;}
-      st.group=g.body.group; st.role=(g.body.me&&g.body.me.role)||'MEMBER'; if(sr.ok&&sr.body&&sr.body.stats)st.stats=sr.body.stats; if(lb.ok&&lb.body&&lb.body.boards)st.boards=lb.body.boards;else st.boards={};
+      st.group=g.body.group; st.role=(g.body.me&&g.body.me.role)||'MEMBER'; if(sr.ok&&sr.body&&sr.body.stats)st.stats=sr.body.stats; if(lb.ok&&lb.body&&lb.body.members)st.members=Array.isArray(lb.body.members)?lb.body.members:[];else st.members=[]; if(lb.ok&&lb.body&&lb.body.boards)st.boards=lb.body.boards;else st.boards={};
       if(forceStats){renderStatsEditor();return;}
       renderGroupShell(false); if(!lb.ok){var card=document.getElementById('thar-board');if(card){card.textContent='';card.appendChild(networkFail(lb,loadBoard));}}else renderBoard();
     }catch(e){clear();b.appendChild(errorBox('Не удалось загрузить Arena.',function(){openGroup(gid,forceStats);}));}
@@ -237,9 +237,12 @@
     var edit=el('button','thar-btn ghost wide','Изменить мои силовые'); edit.style.marginTop='8px'; edit.addEventListener('click',renderStatsEditor); info.appendChild(edit);
     if(st.role==='OWNER'&&API.user()&&st.group.owner_id===API.user().id){var db=el('button','thar-btn danger wide','Удалить группу');db.style.marginTop='8px';db.dataset.busy='del';db.addEventListener('click',async function(){if(!window.confirm('Удалить группу «'+st.group.name+'»?'))return;busy('del',true);var r=await API.request('DELETE','/api/groups/'+st.group.id);busy('del',false);if(r.ok)goHome();else{clear();body().appendChild(networkFail(r,renderGroupShell));}});info.appendChild(db);}else{var leave=el('button','thar-btn danger wide','Выйти из группы');leave.style.marginTop='8px';leave.dataset.busy='leave';leave.addEventListener('click',async function(){busy('leave',true);var r=await API.request('POST','/api/groups/'+st.group.id+'/leave',{});busy('leave',false);if(r.ok)goHome();else{clear();body().appendChild(networkFail(r,renderGroupShell));}});info.appendChild(leave);}
     b.appendChild(info); b.appendChild(renderStatsCard(false,false));
+    var members=el('div','thar-card'); members.id='thar-members'; b.appendChild(members); renderMembers();
     var tabs=el('div','thar-tabs');METRICS.forEach(function(m){var t=el('button','thar-tab'+(st.metric.key===m.key?' on':''),m.label);t.addEventListener('click',function(){st.metric=m;Array.from(tabs.children).forEach(function(x){x.classList.remove('on');});t.classList.add('on');renderBoard();});tabs.appendChild(t);});b.appendChild(tabs);
     var board=el('div','thar-card');board.id='thar-board';b.appendChild(board);renderBoard();
   }
+
+  function renderMembers(){var card=document.getElementById('thar-members');if(!card)return;card.textContent='';card.appendChild(el('div','thar-sub','УЧАСТНИКИ ГРУППЫ'));if(!st.members.length){card.appendChild(el('div','thar-empty','Пока участников нет.'));return;}var me=API.user();st.members.forEach(function(x){var u=x.user||x;var row=el('div','thar-row'+(me&&u&&u.id===me.id?' me':''));row.appendChild(el('div','thar-name',nameOf(u)));row.appendChild(el('div','thar-role',ROLE_LABEL[x.role]||'участник'));card.appendChild(row);});}
 
   function renderBoard(){var card=document.getElementById('thar-board');if(!card)return;card.textContent='';var rows=st.boards[st.metric.api]||[];if(!rows.length){card.appendChild(el('div','thar-empty','Пока никто не ввёл результат для этого рейтинга.'));return;}var podium=rows.slice(0,3);if(podium.length){var pw=el('div','thar-podium');podium.forEach(function(x,idx){var p=el('div','thar-pod'+(idx===0?' first':''));p.appendChild(el('div','m',MEDALS[x.place]||x.place));p.appendChild(el('div','v',x.value+' кг'));p.appendChild(el('div','n',nameOf(x.user)));pw.appendChild(p);});card.appendChild(pw);}var me=API.user();rows.forEach(function(x){var row=el('div','thar-row'+(me&&x.user&&x.user.id===me.id?' me':''));row.appendChild(el('div','thar-place',MEDALS[x.place]||x.place));row.appendChild(el('div','thar-name',nameOf(x.user)));row.appendChild(el('div','thar-val',x.value+' кг'));card.appendChild(row);});}
   async function loadBoard(){if(!st.group)return;var r=await API.request('GET','/api/groups/'+encodeURIComponent(st.group.id)+'/leaderboard?metric=ALL');if(!alive())return;if(r.ok&&r.body&&r.body.boards){st.boards=r.body.boards;renderBoard();}else{var c=document.getElementById('thar-board');if(c){c.textContent='';c.appendChild(networkFail(r,loadBoard));}}}
