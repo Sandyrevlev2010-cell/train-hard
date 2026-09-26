@@ -12,7 +12,7 @@
  *  • PR вычисляется из успешных подходов;
  *  • Total = Squat+Bench+Deadlift PR, только если все три есть;
  *  • Leaderboard: значение ↓, при равенстве — раньше достигнутое ↑;
- *  • Premium — серверная верификация TON-транзакции.
+ *  • Premium — серверная верификация Platega / СБП.
  */
 'use strict';
 
@@ -2583,190 +2583,237 @@ function createApp(opts) {
     }
   );
 
-  /* ---------- Premium: TON ---------- */
+  /* ---------- Premium: Platega / СБП ---------- */
+
+  on(
+    'POST',
+    /^\/payments\/create$/,
+    async (c) => {
+      if (!platega.merchantId || !platega.secret || !platega.amount) {
+        return {
+          code: 503,
+          body: { error: 'payments not configured' }
+        };
+      }
+
+      const label = String(c.body.label || '');
+      if (!/^[A-Za-z0-9_-]{1,64}$/.test(label)) {
+        return {
+          code: 400,
+          body: { error: 'invalid label' }
+        };
+      }
+
+      return withIdem(c.user, label, async () => {
+        const payload = 'trainhard:' + c.user.id + ':' + label;
+
+        const doFetch =
+          platega.fetch ||
+          (typeof fetch === 'function' ? fetch : null);
+
+        if (!doFetch) {
+          return {
+            code: 503,
+            body: { error: 'payments not configured' }
+          };
+        }
+
+        try {
+          const r = await doFetch(
+            'https://app.platega.io/transaction/process',
+            {
+              method: 'POST',
+              headers: {
+                'X-MerchantId': platega.merchantId,
+                'X-Secret': platega.secret,
+                'Content-Type': 'application/json'
+              },
+              body: JSON.stringify({
+                paymentMethod: 2,
+                paymentDetails: {
+                  amount: platega.amount,
+                  currency: 'RUB'
+                },
+                description: 'Train Hard Premium — 30 дней',
+                return: platega.returnUrl,
+                failedUrl: platega.failedUrl,
+                payload,
+                metadata: {
+                  userId: String(c.user.id)
+                }
+              })
+            }
+          );
+
+          const j = await r.json().catch(() => null);
+
+          if (!r.ok || !j || !j.transactionId || !j.redirect) {
+            return {
+              code: 502,
+              body: { error: 'payment provider error' }
+            };
+          }
+
+          return {
+            code: 200,
+            body: {
+              ok: true,
+              transactionId: String(j.transactionId),
+              url: String(j.redirect),
+              status: String(j.status || 'PENDING'),
+              expiresIn: j.expiresIn || null
+            }
+          };
+        } catch (e) {
+          return {
+            code: 502,
+            body: { error: 'payment provider unavailable' }
+          };
+        }
+      });
+    }
+  );
 
   on(
     'POST',
     /^\/payments\/verify$/,
     async (c) => {
-      if (
-        !ton.address ||
-        !ton.amountNano
-      ) {
+      if (!platega.merchantId || !platega.secret || !platega.amount) {
         return {
           code: 503,
-          body: {
-            error:
-              'payments not configured'
-          }
+          body: { error: 'payments not configured' }
         };
       }
 
-      const label =
-        String(
-          c.body.label || ''
-        );
+      const transactionId = String(c.body.transactionId || '').trim();
 
       if (
-        !/^[A-Za-z0-9_-]{1,64}$/
-          .test(label)
+        !/^[0-9a-fA-F-]{20,64}$/.test(transactionId)
       ) {
         return {
           code: 400,
-          body: {
-            error:
-              'invalid label'
-          }
-        };
-      }
-
-      /*
-       * Идемпотентность по label.
-       */
-      const ent =
-        await store.getEntitlement(
-          c.user.id
-        );
-
-      if (
-        ent &&
-        ent.label === label &&
-        ent.until > Date.now()
-      ) {
-        return {
-          code: 200,
-          body: {
-            ok: true,
-            until:
-              ent.until
-          }
+          body: { error: 'invalid transaction id' }
         };
       }
 
       const doFetch =
-        ton.fetch ||
-        (
-          typeof fetch ===
-          'function'
-            ? fetch
-            : null
-        );
+        platega.fetch ||
+        (typeof fetch === 'function' ? fetch : null);
 
       if (!doFetch) {
         return {
           code: 503,
-          body: {
-            error:
-              'payments not configured'
-          }
+          body: { error: 'payments not configured' }
         };
       }
-
-      let found = false;
 
       try {
-        const r =
-          await doFetch(
-            'https://toncenter.com/api/v2/getTransactions?address=' +
-              encodeURIComponent(
-                ton.address
-              ) +
-              '&limit=50'
-          );
-
-        const j =
-          await r.json();
-
-        for (
-          const tx
-          of (
-            j &&
-            Array.isArray(
-              j.result
-            )
-              ? j.result
-              : []
-          )
-        ) {
-          if (
-            tx.in === true &&
-            String(
-              tx.message || ''
-            ) === label &&
-            Number(tx.value) >=
-              ton.amountNano
-          ) {
-            found = true;
-            break;
+        const r = await doFetch(
+          'https://app.platega.io/transaction/' +
+            encodeURIComponent(transactionId),
+          {
+            method: 'GET',
+            headers: {
+              'X-MerchantId': platega.merchantId,
+              'X-Secret': platega.secret
+            }
           }
+        );
+
+        const j = await r.json().catch(() => null);
+
+        if (!r.ok || !j) {
+          if (r.status === 404) {
+            return {
+              code: 200,
+              body: { ok: false }
+            };
+          }
+          return {
+            code: 502,
+            body: { error: 'payment provider error' }
+          };
         }
-      }
 
-      catch (e) {
-        return {
-          code: 502,
-          body: {
-            error:
-              'blockchain api unavailable'
+        const expectedPrefix = 'trainhard:' + c.user.id + ':';
+        const payload = String(j.payload || '');
+
+        if (!payload.startsWith(expectedPrefix)) {
+          return {
+            code: 200,
+            body: { ok: false }
+          };
+        }
+
+        const status = String(j.status || '').toUpperCase();
+        const amount =
+          j.paymentDetails &&
+          Number(j.paymentDetails.amount);
+
+        if (
+          status !== 'CONFIRMED' ||
+          !isFinite(amount) ||
+          amount < platega.amount ||
+          String(j.paymentMethod || '').toUpperCase() !== 'SBPQR'
+        ) {
+          return {
+            code: 200,
+            body: { ok: false, status }
+          };
+        }
+
+        const label = payload.slice(expectedPrefix.length);
+        if (!/^[A-Za-z0-9_-]{1,64}$/.test(label)) {
+          return {
+            code: 200,
+            body: { ok: false }
+          };
+        }
+
+        const ent = await store.getEntitlement(c.user.id);
+        if (
+          ent &&
+          ent.label === label &&
+          ent.until > Date.now()
+        ) {
+          return {
+            code: 200,
+            body: {
+              ok: true,
+              until: ent.until
+            }
+          };
+        }
+
+        const until =
+          Date.now() +
+          platega.periodDays * 86400000;
+
+        await store.setEntitlement(
+          c.user.id,
+          {
+            until,
+            source: 'platega-sbp',
+            label
           }
-        };
-      }
+        );
 
-      if (!found) {
         return {
           code: 200,
           body: {
-            ok: false
+            ok: true,
+            until
           }
         };
+      } catch (e) {
+        return {
+          code: 502,
+          body: { error: 'payment provider unavailable' }
+        };
       }
-
-      const until =
-        Date.now() +
-        ton.periodDays *
-          86400000;
-
-      await store.setEntitlement(
-        c.user.id,
-        {
-          until,
-          source:
-            'ton-verify',
-          label
-        }
-      );
-
-      return {
-        code: 200,
-        body: {
-          ok: true,
-          until
-        }
-      };
     }
   );
 
-  on(
-    'GET',
-    /^\/premium$/,
-    async (c) => {
-      const ent =
-        await store.getEntitlement(
-          c.user.id
-        );
-
-      return {
-        code: 200,
-        body: {
-          premium_until:
-            ent &&
-            ent.until > Date.now()
-              ? ent.until
-              : null
-        }
-      };
-    }
-  );
 
   /* ---------- синхронизация ---------- */
 
